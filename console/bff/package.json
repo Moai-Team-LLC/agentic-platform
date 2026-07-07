@@ -1,0 +1,8 @@
+{
+  "name": "@agentic-platform/console-bff",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run server.ts"
+  }
+}

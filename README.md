@@ -1,0 +1,81 @@
+<div align="center">
+
+# Agentic Platform
+
+### The whole AgenticProduct ecosystem, wired into one runnable product.
+
+*One config · one command · one console.* Run → remember → measure → heal → assure.
+
+</div>
+
+---
+
+Seven standalone products (a standard + six reference implementations) each stay adoptable on
+their own. **This** repo is the opposite bet: the *integrated* platform — the pieces hard-wired
+together, one shared config, one control plane. It doesn't fork or modify the products; it
+**vendors them as submodules** and composes them.
+
+```bash
+git clone --recurse-submodules <this-repo> && cd agentic-platform
+cp integration/platform.env.example .env      # add your OPENROUTER_API_KEY
+./cli/agentic up                              # brings the whole ecosystem up, wired
+open http://localhost:4600                     # the console
+./cli/agentic demo                            # run the closed loop and watch it land
+```
+
+## What "wired" means
+
+The platform bakes in the cross-product integration (in the standalone products these are
+*optional* seams; here they're on by default):
+
+- **Every LLM call flows through AgenticGateway** — Mind and Performance get a minted Gateway
+  tenant key; the gateway routes to one upstream (OpenRouter), with per-tenant budgets, caching,
+  and a cost ledger.
+- **Every trace flows into AgenticPerformance** — Mind and Gateway export OTel to `:4319`;
+  spans are attributed per-agent (`gen_ai.agent.id`).
+- **AgenticAssurance red-teams the family** — `agentic demo` scans the products' own capability
+  manifests.
+- **One shared config & secrets** — a single `.env`; the CLI renders each service's env, mints
+  tenants, generates secrets, and isolates Docker volumes with a platform-unique project prefix.
+
+## The console
+
+A single control plane (`console/`) aggregating the live ecosystem into one pane:
+
+| Pane | Source |
+|---|---|
+| Service health + the loop | all services |
+| Traces + agents | AgenticPerformance (`apl_span`) |
+| Cost + routes | AgenticGateway (evidence ledger) |
+| Security findings | AgenticAssurance (SARIF) |
+| Knowledge & memory | AgenticMind |
+
+## Layout
+
+```
+agentic-platform/
+├── vendor/            ← the 7 products as pinned git submodules (never modified)
+├── integration/      ← the unified config
+├── cli/agentic       ← the control plane: up · down · status · demo · token · logs
+├── console/          ← BFF (Bun) + web dashboard — the single pane
+├── examples/         ← the closed-loop demo + family capability manifests
+└── deploy/           ← (compose/helm — hardening)
+```
+
+## The products
+
+📐 [agentic-product-standard](https://github.com/Moai-Team-LLC/agentic-product-standard) ·
+⚙️ [AgenticOps](https://github.com/Moai-Team-LLC/AgenticOps) ·
+🧠 [AgenticMind](https://github.com/Moai-Team-LLC/AgenticMind) ·
+📈 [AgenticPerformance](https://github.com/Moai-Team-LLC/AgenticPerformance) ·
+🩹 [AgenticSelfHealingCode](https://github.com/Moai-Team-LLC/AgenticSelfHealingCode) ·
+🛡️ [AgenticAssurance](https://github.com/Moai-Team-LLC/AgenticAssurance) ·
+🚪 [AgenticGateway](https://github.com/Moai-Team-LLC/AgenticGateway)
+
+## Requirements
+
+[Bun](https://bun.sh) ≥ 1.3 · Docker · an OpenRouter key. The bge-m3 embedding model (~2 GB)
+downloads once into a shared cache.
+
+> **Note.** This is the integration product — it deliberately couples the pieces. The individual
+> repos remain standalone and vendor-neutral (Principle 2); adopt one, or run the whole platform here.

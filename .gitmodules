@@ -1,0 +1,21 @@
+[submodule "vendor/agentic-product-standard"]
+	path = vendor/agentic-product-standard
+	url = https://github.com/Moai-Team-LLC/agentic-product-standard.git
+[submodule "vendor/AgenticOps"]
+	path = vendor/AgenticOps
+	url = https://github.com/Moai-Team-LLC/AgenticOps.git
+[submodule "vendor/AgenticMind"]
+	path = vendor/AgenticMind
+	url = https://github.com/Moai-Team-LLC/AgenticMind.git
+[submodule "vendor/AgenticPerformance"]
+	path = vendor/AgenticPerformance
+	url = https://github.com/Moai-Team-LLC/AgenticPerformance.git
+[submodule "vendor/AgenticSelfHealingCode"]
+	path = vendor/AgenticSelfHealingCode
+	url = https://github.com/Moai-Team-LLC/AgenticSelfHealingCode.git
+[submodule "vendor/AgenticAssurance"]
+	path = vendor/AgenticAssurance
+	url = https://github.com/Moai-Team-LLC/AgenticAssurance.git
+[submodule "vendor/AgenticGateway"]
+	path = vendor/AgenticGateway
+	url = https://github.com/Moai-Team-LLC/AgenticGateway.git

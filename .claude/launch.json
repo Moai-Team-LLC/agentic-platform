@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "console",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "cd \"$HOME/Documents/ClaudeCode/agentic-platform/console/bff\" && MIND_URL=http://localhost:3000 GATEWAY_URL=http://localhost:8787 BIFROST_URL=http://localhost:8080 APL_URL=http://localhost:4319 MIND_PG_PORT=5435 APL_PG_PORT=5439 GATEWAY_DIR=\"$HOME/Documents/ClaudeCode/agentic-stack/AgenticGateway\" MANIFEST_SARIF=\"$HOME/Documents/ClaudeCode/agentic-stack/manifests/agenticmind.sarif\" CONSOLE_PORT=4600 bun run server.ts"
+      ],
+      "port": 4600
+    }
+  ]
+}

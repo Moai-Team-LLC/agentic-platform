@@ -1,0 +1,17 @@
+{
+  "manifestVersion": "0.1",
+  "name": "agenticmind-mcp",
+  "identity": { "delegated": true, "scoped": true },
+  "tools": [
+    { "name": "kl_search", "sideEffect": "read", "dataScopes": [{ "id": "knowledge-corpus", "sensitivity": "private" }], "description": "Semantic search over the tenant knowledge base." },
+    { "name": "kl_ask_global", "sideEffect": "read", "dataScopes": [{ "id": "knowledge-corpus", "sensitivity": "private" }], "description": "RAG answer with citations." },
+    { "name": "kl_ingest", "sideEffect": "write", "dataScopes": [{ "id": "knowledge-corpus", "sensitivity": "private" }], "description": "Add text to the KB (requires knowledge:write)." },
+    { "name": "mem_recall", "sideEffect": "read", "dataScopes": [{ "id": "agent-memory", "sensitivity": "private" }], "description": "Recall the caller's beliefs." },
+    { "name": "mem_write", "sideEffect": "write", "dataScopes": [{ "id": "agent-memory", "sensitivity": "private" }], "description": "Record a belief (requires memory:write)." }
+  ],
+  "untrustedIngress": [{ "id": "retrieved-knowledge", "kind": "retrieval" }],
+  "declaredMitigations": [
+    { "id": "injection-guard", "breaks": "untrusted-ingress", "control": "guardInput injection detection + synthesis isolates numbered sources as untrusted data, never instructions; citation-enforcement strips uncited claims." },
+    { "id": "tenant-rls-scoped-tokens", "breaks": "private-data", "control": "Postgres RLS tenant isolation (NOBYPASSRLS app role) + least-privilege scoped MCP JWTs; PII redaction with guard_events audit." }
+  ]
+}

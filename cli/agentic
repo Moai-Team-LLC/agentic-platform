@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+#
+# agentic — the Agentic Platform control plane.
+# One command brings up the whole ecosystem, wired: every LLM call flows through
+# AgenticGateway, every trace into AgenticPerformance, on one shared config.
+#
+#   agentic up        bring the platform up (infra + services + console), wired
+#   agentic down      stop everything (data volumes preserved)
+#   agentic status    health of every service
+#   agentic console   open the console URL
+#   agentic demo      run the closed-loop demo (ask → route → trace → scan)
+#   agentic token     mint an MCP token for AgenticMind (for Claude Code etc.)
+#   agentic logs <mind|apl|gateway|console>
+#
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+V="$ROOT/vendor"
+ENVF="$ROOT/.env"
+LOGDIR="$ROOT/.run"; mkdir -p "$LOGDIR"
+
+c() { printf "\033[%sm%s\033[0m" "$1" "$2"; }
+say() { echo "$(c '1;36' '▸') $*"; }
+ok()  { echo "  $(c '1;32' '✓') $*"; }
+warn(){ echo "  $(c '1;33' '!') $*"; }
+
+load_env() {
+  [ -f "$ENVF" ] || { say "creating .env from template"; sed "s#\${HOME}#$HOME#g" "$ROOT/integration/platform.env.example" > "$ENVF"; }
+  set -a; . "$ENVF"; set +a
+  : "${MIND_PORT:=3000}" "${APL_INGEST_PORT:=4319}" "${GATEWAY_PORT:=8787}" "${BIFROST_PORT:=8080}" "${CONSOLE_PORT:=4600}"
+  : "${MIND_PG_PORT:=5435}" "${APL_PG_PORT:=5439}" "${COMPOSE_PREFIX:=agentic-platform}"
+  : "${EMBED_CACHE_DIR:=$HOME/.cache/agenticmind-embed}" "${EMBED_HF_ENDPOINT:=https://hf-mirror.com}"
+  if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    warn "OPENROUTER_API_KEY is empty in $ENVF — the model plane needs one upstream key."; return 1
+  fi
+}
+
+gen_secret() { # $1 = var name; fill in .env if empty
+  local var="$1" val; val="$(grep -E "^$var=" "$ENVF" | cut -d= -f2-)"
+  if [ -z "$val" ]; then val="$(openssl rand -hex 32)";
+    perl -i -pe "s/^$var=.*/$var=$val/" "$ENVF"; export "$var=$val"; fi
+}
+
+ensure_deps() { # $1 = vendor dir
+  [ -d "$V/$1/node_modules" ] || { say "bun install ($1)"; ( cd "$V/$1" && bun install >/dev/null 2>&1 ); }
+}
+
+wait_health() { # $1 url  $2 name
+  for i in $(seq 1 60); do curl -fsS --max-time 2 "$1" >/dev/null 2>&1 && { ok "$2 up"; return 0; }; sleep 1; done
+  warn "$2 did not become healthy — see: agentic logs"; return 1
+}
+
+compose() { # $1 project-suffix ; rest = compose args (run inside the service dir via caller)
+  local proj="$COMPOSE_PREFIX-$1"; shift
+  COMPOSE_PROJECT_NAME="$proj" docker compose "$@"
+}
+
+# ── Gateway: Bifrost data plane + edge, OpenRouter provider ──
+up_gateway() {
+  say "AgenticGateway (model plane)"
+  ensure_deps AgenticGateway
+  local g="$V/AgenticGateway"
+  # .env for the edge + Bifrost (native openrouter provider)
+  {
+    echo "AGW_PORT=$GATEWAY_PORT"; echo "AGW_DB_PATH=./data/agw.db"
+    echo "BIFROST_URL=http://localhost:$BIFROST_PORT"; echo "AGW_VAULT_KEY=$AGW_VAULT_KEY"
+    echo "AGW_EVIDENCE_SINK=file"; echo "AGW_EVIDENCE_FILE=./data/evidence.jsonl"
+    echo "OPENAI_API_KEY=$OPENROUTER_API_KEY"; echo "OPENROUTER_API_KEY=$OPENROUTER_API_KEY"
+  } > "$g/.env"
+  mkdir -p "$g/data"
+  python3 - "$g/bifrost/data/config.json" <<'PY'
+import json,io,sys
+p=sys.argv[1]; d=json.load(io.open(p,encoding='utf-8'))
+d.setdefault('providers',{})['openrouter']={"keys":[{"name":"openrouter-key","value":"env.OPENROUTER_API_KEY","models":["*"],"weight":1.0}]}
+d['providers'].get('openai',{}).pop('network_config',None)
+io.open(p,'w',encoding='utf-8').write(json.dumps(d,indent=2))
+PY
+  # ensure the bifrost compose passes OPENROUTER_API_KEY into the container
+  grep -q "OPENROUTER_API_KEY" "$g/bifrost/docker-compose.yml" || \
+    perl -0pi -e 's/(\n\s*- ANTHROPIC_API_KEY=\$\{ANTHROPIC_API_KEY:-\})/$1\n      - OPENROUTER_API_KEY=\${OPENROUTER_API_KEY:-}/' "$g/bifrost/docker-compose.yml"
+  ( cd "$g" && COMPOSE_PROJECT_NAME="$COMPOSE_PREFIX-bifrost" docker compose -f bifrost/docker-compose.yml --env-file .env up -d >/dev/null 2>&1 )
+  wait_health "http://localhost:$BIFROST_PORT/health" "Bifrost data plane"
+  ( cd "$g" && nohup bun run dev > "$LOGDIR/gateway.log" 2>&1 & )
+  wait_health "http://localhost:$GATEWAY_PORT/health" "Gateway edge"
+}
+
+mint_tenant() { # $1 name -> echoes sk-agw key
+  local g="$V/AgenticGateway" out key
+  out="$(cd "$g" && bun run src/cli.ts tenant create "$1" --budget-usd 100 2>/dev/null)"
+  key="$(echo "$out" | grep -oE 'sk-agw-[A-Za-z0-9_-]+' | head -1)"
+  echo "$key"
+}
+
+# ── AgenticMind: memory/knowledge MCP, LLM via Gateway, traces to APL ──
+up_mind() {
+  say "AgenticMind (knowledge & memory)"
+  ensure_deps AgenticMind
+  local m="$V/AgenticMind" key; key="$(mint_tenant agenticmind)"
+  [ -n "$key" ] && ok "minted Gateway tenant: agenticmind" || warn "no gateway tenant key (Mind LLM may fail)"
+  cat > "$m/.env.local" <<EOF
+NODE_ENV=development
+SKIP_VALIDATION=true
+DATABASE_URL=postgresql://postgres:mysecretpassword@localhost:$MIND_PG_PORT/postgres
+DATABASE_POOL_MAX=10
+DATABASE_SSL=false
+CHAT_BASE_URL=http://localhost:$GATEWAY_PORT/v1
+CHAT_API_KEY=${key:-$OPENROUTER_API_KEY}
+AUTH_SECRET=$AUTH_SECRET
+KNOWLEDGE_CARDS_ENABLED=true
+KNOWLEDGE_CACHE_ENABLED=true
+KNOWLEDGE_GRAPHRAG_ENABLED=false
+NEXT_PUBLIC_APP_URL=http://localhost:$MIND_PORT
+EMBED_PROVIDER=local
+EMBED_MODEL=Xenova/bge-m3
+EMBED_POOLING=cls
+EMBED_CACHE_DIR=$EMBED_CACHE_DIR
+EMBED_HF_ENDPOINT=$EMBED_HF_ENDPOINT
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:$APL_INGEST_PORT
+OTEL_SERVICE_NAME=agenticmind
+EOF
+  ln -sf ../../.env.local "$m/apps/server/.env.local"
+  ln -sf ../../.env.local "$m/apps/worker/.env.local"
+  ( cd "$m" && COMPOSE_PROJECT_NAME="$COMPOSE_PREFIX-mind" docker compose -f docker-compose.yml -f docker-compose.local.yml up -d >/dev/null 2>&1 )
+  for i in $(seq 1 60); do COMPOSE_PROJECT_NAME="$COMPOSE_PREFIX-mind" docker compose -f "$m/docker-compose.yml" -f "$m/docker-compose.local.yml" exec -T db pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
+  ( cd "$m" && bun run db:migrate-local >/dev/null 2>&1 )
+  ( cd "$m" && nohup bun run dev > "$LOGDIR/mind.log" 2>&1 & )
+  wait_health "http://localhost:$MIND_PORT/health" "AgenticMind MCP"
+}
+
+# ── AgenticPerformance: OTLP trace/eval store ──
+up_apl() {
+  say "AgenticPerformance (evals & observability)"
+  ensure_deps AgenticPerformance
+  local a="$V/AgenticPerformance" key; key="$(mint_tenant apl)"
+  cat > "$a/.env.local" <<EOF
+DATABASE_URL=postgresql://postgres:postgres@localhost:$APL_PG_PORT/postgres
+APL_CHAT_BASE_URL=http://localhost:$GATEWAY_PORT/v1
+APL_CHAT_API_KEY=${key:-$OPENROUTER_API_KEY}
+PORT=$APL_INGEST_PORT
+APL_MAX_BODY_BYTES=5000000
+EOF
+  ( cd "$a" && COMPOSE_PROJECT_NAME="$COMPOSE_PREFIX-apl" docker compose up -d >/dev/null 2>&1 )
+  for i in $(seq 1 60); do COMPOSE_PROJECT_NAME="$COMPOSE_PREFIX-apl" docker compose -f "$a/docker-compose.yml" exec -T db pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
+  ( cd "$a" && bun run db:migrate-local >/dev/null 2>&1 )
+  ( cd "$a" && nohup bun run ingest > "$LOGDIR/apl.log" 2>&1 & )
+  wait_health "http://localhost:$APL_INGEST_PORT/health" "AgenticPerformance ingest"
+}
+
+# ── The console (BFF + web) ──
+up_console() {
+  say "Console"
+  ensure_deps ../console/bff 2>/dev/null || { [ -d "$ROOT/console/bff/node_modules" ] || ( cd "$ROOT/console/bff" && bun install >/dev/null 2>&1 ); }
+  ( cd "$ROOT/console/bff" && \
+    MIND_URL="http://localhost:$MIND_PORT" GATEWAY_URL="http://localhost:$GATEWAY_PORT" \
+    BIFROST_URL="http://localhost:$BIFROST_PORT" APL_URL="http://localhost:$APL_INGEST_PORT" \
+    APL_PG_PORT="$APL_PG_PORT" MIND_PG_PORT="$MIND_PG_PORT" GATEWAY_DIR="$V/AgenticGateway" \
+    ASSURANCE_DIR="$V/AgenticAssurance" MANIFEST_SARIF="$ROOT/.run/agenticmind.sarif" \
+    CONSOLE_PORT="$CONSOLE_PORT" nohup bun run server.ts > "$LOGDIR/console.log" 2>&1 & )
+  wait_health "http://localhost:$CONSOLE_PORT/api/health" "Console"
+}
+
+cmd_up() {
+  load_env || return 1
+  gen_secret AUTH_SECRET; gen_secret AGW_VAULT_KEY
+  mkdir -p "$EMBED_CACHE_DIR"
+  say "Bringing up the Agentic Platform — wired, one config."
+  up_gateway; up_mind; up_apl; up_console
+  echo; ok "Platform up. Console → $(c '1;4;36' "http://localhost:$CONSOLE_PORT")"
+  echo "     Try: agentic demo   ·   agentic status"
+}
+
+cmd_down() {
+  load_env 2>/dev/null || true
+  say "Stopping services"
+  pkill -f "vendor/AgenticMind.*tsx watch" 2>/dev/null; pkill -f "vendor/AgenticMind.*turbo run dev" 2>/dev/null
+  pkill -f "vendor/AgenticPerformance/apps/ingest" 2>/dev/null
+  pkill -f "vendor/AgenticGateway.*src/cli.ts serve" 2>/dev/null
+  pkill -f "console/bff/server.ts" 2>/dev/null
+  for s in mind apl; do
+    d="$V/AgenticMind"; [ "$s" = apl ] && d="$V/AgenticPerformance"
+    ( cd "$d" && COMPOSE_PROJECT_NAME="$COMPOSE_PREFIX-$s" docker compose $( [ "$s" = mind ] && echo "-f docker-compose.yml -f docker-compose.local.yml" ) stop >/dev/null 2>&1 )
+  done
+  ( cd "$V/AgenticGateway" && COMPOSE_PROJECT_NAME="$COMPOSE_PREFIX-bifrost" docker compose -f bifrost/docker-compose.yml stop >/dev/null 2>&1 )
+  ok "stopped (volumes preserved)"
+}
+
+cmd_status() {
+  load_env 2>/dev/null || true
+  h() { curl -fsS --max-time 2 "$1" >/dev/null 2>&1 && c '1;32' "up" || c '1;31' "down"; }
+  printf "  %-28s %s\n" "AgenticGateway :$GATEWAY_PORT"  "$(h http://localhost:$GATEWAY_PORT/health)"
+  printf "  %-28s %s\n" "  Bifrost :$BIFROST_PORT"        "$(h http://localhost:$BIFROST_PORT/health)"
+  printf "  %-28s %s\n" "AgenticMind :$MIND_PORT"         "$(h http://localhost:$MIND_PORT/health)"
+  printf "  %-28s %s\n" "AgenticPerformance :$APL_INGEST_PORT" "$(h http://localhost:$APL_INGEST_PORT/health)"
+  printf "  %-28s %s\n" "Console :$CONSOLE_PORT"          "$(h http://localhost:$CONSOLE_PORT/api/health)"
+}
+
+cmd_token() { load_env || return 1; ( cd "$V/AgenticMind" && bun run scripts/issue-mcp-token.ts --label "${1:-platform}" --ttl-days 365 ); }
+cmd_logs()  { load_env 2>/dev/null||true; tail -40 "$LOGDIR/${1:-console}.log" 2>/dev/null || echo "no log: $1"; }
+cmd_console(){ load_env 2>/dev/null||true; echo "http://localhost:$CONSOLE_PORT"; command -v open >/dev/null && open "http://localhost:$CONSOLE_PORT" 2>/dev/null || true; }
+cmd_demo()  { load_env || return 1; bash "$ROOT/examples/closed-loop.sh"; }
+
+case "${1:-}" in
+  up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; token) shift; cmd_token "$@" ;;
+  logs) shift; cmd_logs "$@" ;; console) cmd_console ;; demo) cmd_demo ;;
+  *) sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+esac

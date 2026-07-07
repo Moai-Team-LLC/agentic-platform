@@ -1,0 +1,21 @@
+# secrets & runtime — never commit
+.env
+.run/
+*.log
+
+# deps & build
+node_modules/
+**/node_modules/
+console/**/node_modules/
+
+# per-service rendered config (written by `agentic up`)
+vendor/*/.env
+vendor/*/.env.local
+vendor/*/apps/*/.env.local
+vendor/*/data/
+
+# scan artifacts
+examples/**/*.sarif
+examples/**/*.md.out
+
+.DS_Store
