@@ -10,7 +10,7 @@
  *   MIND_URL, MIND_PG_PORT, APL_PG_PORT, GATEWAY_DIR, ASSURANCE_DIR, CONSOLE_PORT
  */
 import { SQL } from "bun"
-import { readFileSync, existsSync } from "node:fs"
+import { readFileSync, existsSync, statSync } from "node:fs"
 import { join } from "node:path"
 
 const PORT = Number(process.env.CONSOLE_PORT ?? 4600)
@@ -20,6 +20,7 @@ const BIFROST_URL = process.env.BIFROST_URL ?? "http://localhost:8080"
 const APL_URL = process.env.APL_URL ?? "http://localhost:4319"
 const SELFHEAL_URL = process.env.SELFHEAL_URL ?? "http://localhost:3100"
 const OPS_URL = process.env.OPS_URL ?? "http://localhost:4700"
+const MIND_TOKEN = process.env.MIND_TOKEN ?? "" // heartbeat MCP token, for the interactive "ask" box
 const MIND_PG_HOST = process.env.MIND_PG_HOST ?? "localhost"
 const MIND_PG = process.env.MIND_PG_PORT ?? "5435"
 const APL_PG_HOST = process.env.APL_PG_HOST ?? "localhost"
@@ -50,7 +51,11 @@ const health = async () => {
     up(`${SELFHEAL_URL}/status`),
     up(`${OPS_URL}/health`),
   ])
-  const scanned = existsSync(sarifPath())
+  // assurance is "up" only if the refresher actually produced a RECENT scan — a
+  // stale/dead refresher must stop reporting green (freshness, not mere existence).
+  const lr = lastRefresh()
+  const scanAgeSec = lr ? (Date.now() - new Date(lr).getTime()) / 1000 : null
+  const scanned = existsSync(sarifPath()) && (scanAgeSec === null || scanAgeSec < 600)
   return {
     // the full family — the run→remember→measure→heal→assure loop, governed by
     // the Standard (the contract).
@@ -179,12 +184,62 @@ const memory = async () => {
   }
 }
 
+// age (seconds) of the last routed LLM call — the freshest signal that the model
+// plane is actually alive. Stale ⇒ the provider key likely expired / gateway down.
+const lastCallAgeSec = (): number | null => {
+  try {
+    const f = GATEWAY_EVIDENCE_FILE !== "" ? GATEWAY_EVIDENCE_FILE : join(GATEWAY_DIR, "data", "evidence.jsonl")
+    if (!existsSync(f)) return null
+    return Math.round((Date.now() - statSync(f).mtimeMs) / 1000)
+  } catch {
+    return null
+  }
+}
+
+// the one write path: ask AgenticMind a question (proxied MCP kl_ask_global) so the
+// console is a tool you can act from, not just a dashboard.
+const ask = async (req: Request) => {
+  try {
+    const { question } = (await req.json()) as { question?: string }
+    if (!question || typeof question !== "string") return { error: "question required" }
+    if (MIND_TOKEN === "") return { error: "no MCP token — restart the console after `agentic up`" }
+    const r = await fetch(`${MIND_URL}/mcp`, {
+      method: "POST",
+      signal: AbortSignal.timeout(40000),
+      headers: { Authorization: `Bearer ${MIND_TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kl_ask_global", arguments: { question } } }),
+    })
+    if (!r.ok) return { error: `Mind ${r.status}` }
+    const raw = await r.text()
+    for (const line of raw.split("\n")) {
+      const s = line.replace(/^data:\s*/, "").trim()
+      if (!s) continue
+      try {
+        const t = JSON.parse(s)?.result?.content?.[0]?.text
+        if (typeof t === "string") {
+          try {
+            return { answer: JSON.parse(t).answer ?? t }
+          } catch {
+            return { answer: t }
+          }
+        }
+      } catch {
+        /* not the result frame */
+      }
+    }
+    return { answer: "" }
+  } catch (e) {
+    return { error: "ask failed: " + (e instanceof Error ? e.message : String(e)) }
+  }
+}
+
 const json = (v: unknown) => new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } })
 
 Bun.serve({
   port: PORT,
   async fetch(req) {
     const { pathname } = new URL(req.url)
+    if (pathname === "/api/ask" && req.method === "POST") return json(await ask(req))
     switch (pathname) {
       case "/api/health":
         return json(await health())
@@ -212,6 +267,7 @@ Bun.serve({
           selfheal: s,
           fleet: fl,
           lastRefresh: lastRefresh(),
+          lastCallAgeSec: lastCallAgeSec(),
           now: new Date().toISOString(),
         })
       }

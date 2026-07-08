@@ -68,7 +68,19 @@
   .sev .critical{color:var(--down);border-color:#e0574b44} .sev .high{color:var(--warn);border-color:#d9a44144}
   .sev .pass{color:var(--up);border-color:#3fb47f44}
   .muted{color:var(--mut)} .empty{color:var(--dim);font-size:12.5px;padding:10px 2px}
+  .err{color:var(--down);font-size:12px;padding:8px 2px}
+  .ask{display:flex;gap:8px;margin:0 0 12px}
+  .ask input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--ink);
+             padding:8px 11px;font-family:var(--sans);font-size:13px;outline:none}
+  .ask input:focus{border-color:var(--teal)}
+  .ask button{background:var(--teal);color:#fff;border:none;border-radius:8px;padding:8px 15px;font-weight:600;
+              font-size:13px;cursor:pointer;transition:background .15s}
+  .ask button:hover{background:var(--teal-d)} .ask button:active{transform:translateY(1px)}
+  .ask button:disabled{opacity:.5;cursor:default}
+  .answer{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px;
+          font-size:12.5px;line-height:1.55;white-space:pre-wrap;max-height:200px;overflow:auto}
   .foot{margin:26px 2px 8px;color:var(--dim);font-size:11.5px;font-family:var(--mono)}
+  .foot .stale{color:var(--warn)}
 </style>
 </head>
 <body>
@@ -124,6 +136,11 @@
           <div class="kpi"><div class="v teal" id="beliefs">—</div><div class="l">beliefs</div></div>
           <div class="kpi"><div class="v" id="materials">—</div><div class="l">materials</div></div>
         </div>
+        <div class="ask">
+          <input id="askInput" type="text" placeholder="Ask AgenticMind a question…" autocomplete="off" />
+          <button id="askBtn">Ask</button>
+        </div>
+        <div id="askAnswer" class="answer" hidden></div>
         <table><tbody id="memRows"><tr><td class="empty">memory empty</td></tr></tbody></table>
       </div>
     </section>
@@ -198,7 +215,7 @@ async function tick(){
   const det = await (await fetch("/api/traces")).json()
   $("traceRows").innerHTML = (det.rows||[]).slice(0,8).map(r=>
     `<tr><td><span class="badge agent">${esc(r.agent)}</span></td><td class="op">${esc(r.operation||'')}</td><td class="muted">${esc(r.name||'')}</td><td class="r num">${r.tokens||0}</td></tr>`
-  ).join("") || `<tr><td colspan="4" class="empty">no traces yet</td></tr>`
+  ).join("") || `<tr><td colspan="4" class="${det.error?'err':'empty'}">${det.error?esc(det.error):'no traces yet'}</td></tr>`
 
   // cost
   const cst = d.cost||{}
@@ -206,7 +223,7 @@ async function tick(){
   $("costCalls").textContent = cst.calls ?? 0
   $("costRows").innerHTML = (cst.byRoute||[]).slice(0,6).map(r=>
     `<tr><td class="num muted">${esc(r.route)}</td><td class="r num">${r.n}</td><td class="r num">${usd(r.cost)}</td></tr>`
-  ).join("") || `<tr><td colspan="3" class="empty">no calls yet</td></tr>`
+  ).join("") || `<tr><td colspan="3" class="${cst.error?'err':'empty'}">${cst.error?esc(cst.error):'no calls yet'}</td></tr>`
 
   // security
   const f = d.findings||{}
@@ -226,7 +243,7 @@ async function tick(){
   $("materials").textContent = m.materials ?? 0
   $("memRows").innerHTML = (m.recent||[]).map(b=>
     `<tr><td><b>${esc(b.subject)}</b> <span class="op">${esc(b.predicate)}</span> <span class="muted">${esc(b.object)}</span></td></tr>`
-  ).join("") || `<tr><td class="empty">memory empty — run the demo</td></tr>`
+  ).join("") || `<tr><td class="${m.error?'err':'empty'}">${m.error?esc(m.error):'memory empty — ask a question or run the demo'}</td></tr>`
 
   // self-healing
   const sh = d.selfheal||{}, st = sh.stats||{}
@@ -251,14 +268,34 @@ async function tick(){
   }).join("") || `<tr><td colspan="2" class="empty">${fl.error?esc(fl.error):'fleet warming up…'}</td></tr>`
   $("govRows").innerHTML = `<span class="dot comp" style="display:inline-block;margin-right:7px"></span>governed by the <b>Agentic Product Standard</b> — the contract all layers conform to`
 
-  // live indicator
-  const upd = d.now ? new Date(d.now) : null
+  // live indicator + model-plane liveness (last routed call)
   const scan = d.lastRefresh ? Math.round((Date.now()-new Date(d.lastRefresh).getTime())/1000) : null
   const ago = scan==null ? '' : scan<90 ? `${scan}s` : `${Math.round(scan/60)}m`
+  const lc = d.lastCallAgeSec
+  const lcStr = lc==null ? '' : lc<90 ? `${lc}s` : `${Math.round(lc/60)}m`
+  const lcStale = lc!=null && lc>600
   $("foot").innerHTML = `<span class="live"><span class="b"></span> live</span> · updated just now`
     + (scan!=null ? ` · scan refreshed ${ago} ago` : '')
+    + (lc!=null ? ` · <span class="${lcStale?'stale':''}">model plane ${lcStale?'idle':'active'} — last call ${lcStr} ago</span>` : '')
     + ` · run → remember → measure → heal → assure`
 }
+
+// interactive: ask AgenticMind from the console (POST /api/ask → MCP kl_ask_global)
+async function doAsk(){
+  const q = $("askInput").value.trim(); if(!q) return
+  const btn=$("askBtn"), out=$("askAnswer")
+  btn.disabled=true; btn.textContent="…"; out.hidden=false; out.textContent="thinking…"; out.style.color="var(--mut)"
+  try{
+    const r = await fetch("/api/ask",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:q})})
+    const d = await r.json()
+    out.textContent = d.answer || d.error || "(no answer)"
+    out.style.color = d.error ? "var(--down)" : "var(--ink)"
+  }catch(e){ out.textContent="ask failed — is the platform up?"; out.style.color="var(--down)" }
+  btn.disabled=false; btn.textContent="Ask"
+}
+document.getElementById("askBtn").addEventListener("click", doAsk)
+document.getElementById("askInput").addEventListener("keydown", e=>{ if(e.key==="Enter") doAsk() })
+
 tick(); setInterval(tick, 4000)
 </script>
 </body>
