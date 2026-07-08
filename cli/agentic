@@ -174,6 +174,8 @@ cmd_ask() {
 
 # ingest a file — or every .md/.txt in a directory — into the knowledge base.
 # Each file is chunked, embedded, and distilled into fact cards (kl_ingest).
+# Large files (>40 KB) are auto-split into ~20 KB parts on paragraph boundaries —
+# a single kl_ingest of 100 KB+ times out on card extraction.
 cmd_ingest() {
   load_env || return 1
   [ -n "${HEARTBEAT_TOKEN:-}" ] || { warn "no MCP token — run: agentic up"; return 1; }
@@ -190,18 +192,47 @@ cmd_ingest() {
   say "Ingesting $total file(s) into AgenticMind (chunk → embed → distil)"
   for f in "${files[@]}"; do
     [ -f "$f" ] && [ -s "$f" ] || { warn "skip $(basename "$f") (missing/empty)"; continue; }
-    local title body resp
-    title="$(basename "${f%.*}")"
-    # build the JSON in python (reads the file directly — proper escaping, no ARG_MAX limit)
-    body="$(python3 -c 'import json,sys
-t=open(sys.argv[2],encoding="utf-8").read()
-print(json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kl_ingest","arguments":{"title":sys.argv[1],"text":t}}}))' "$title" "$f")"
-    resp="$(curl -fsS --max-time 120 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
-      -H "Authorization: Bearer $HEARTBEAT_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-      -d "$body" 2>/dev/null)"
-    if printf '%s' "$resp" | grep -q '"result"' && ! printf '%s' "$resp" | grep -q '"isError":true'; then okn=$((okn+1)); ok "$title"; else failn=$((failn+1)); bad "$title"; fi
+    # python writes one JSON-RPC body per chunk to a temp file and prints "<title>\t<path>"
+    # (temp files keep large bodies out of the shell + avoid base64 -d/-D portability)
+    local chunks
+    chunks="$(python3 - "$f" "$(basename "${f%.*}")" <<'PY'
+import sys, os, json, tempfile
+path, title = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+MAX, SIZE = 40000, 20000
+def emit(t, x):
+    fd, p = tempfile.mkstemp(suffix=".json", prefix="aging_")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                   "params":{"name":"kl_ingest","arguments":{"title":t,"text":x}}}, fh)
+    print(t + "\t" + p)
+if len(text.encode()) <= MAX:
+    emit(title, text)
+else:
+    parts, cur = [], ""
+    for para in text.split("\n\n"):
+        if cur and len((cur + "\n\n" + para).encode()) > SIZE:
+            parts.append(cur); cur = para
+        else:
+            cur = (cur + "\n\n" + para) if cur else para
+    if cur: parts.append(cur)
+    for i, part in enumerate(parts, 1):
+        emit("%s (part %d/%d)" % (title, i, len(parts)), part)
+PY
+)"
+    local any_fail=0
+    while IFS=$'\t' read -r ctitle cpath; do
+      [ -n "$cpath" ] || continue
+      local resp
+      resp="$(curl -fsS --max-time 150 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
+        -H "Authorization: Bearer $HEARTBEAT_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+        --data-binary @"$cpath" 2>/dev/null)"
+      rm -f "$cpath"
+      if printf '%s' "$resp" | grep -q '"result"' && ! printf '%s' "$resp" | grep -q '"isError":true'; then ok "$ctitle"; else any_fail=1; bad "$ctitle"; fi
+    done <<< "$chunks"
+    [ "$any_fail" -eq 0 ] && okn=$((okn+1)) || failn=$((failn+1))
   done
-  echo; ok "ingested $okn/$total (failed $failn) — see the console Knowledge pane or: agentic ask \"…\""
+  echo; ok "ingested $okn/$total file(s) fully (failed $failn) — console Knowledge pane / agentic ask \"…\""
 }
 
 # dump every database (Mind memory, APL traces, SHO incidents) + the gateway ledger.
