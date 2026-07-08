@@ -63,6 +63,29 @@ services:
       timeout: 5s
       retries: 30
 
+  # ── embeddings: a dedicated bge-m3 server (same model, 1024-dim) so Mind
+  #    doesn't hold a ~2.3 GB model in-process. Ollama unloads it when idle. ──
+  embeddings:
+    image: ollama/ollama:0.5.7
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+      OLLAMA_KEEP_ALIVE: "10m"
+    volumes: ["ollama-models:/root/.ollama"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        ollama pull bge-m3 || true
+        wait
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list 2>/dev/null | grep -q bge-m3"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+    mem_limit: 2g
+
   # ── AgenticMind: knowledge & memory ────────────────────────
   mind-db:
     image: timescale/timescaledb-ha:pg17
@@ -90,9 +113,11 @@ services:
 
   mind-server:
     restart: unless-stopped
+    mem_limit: 1500m
     depends_on:
       mind-migrate: { condition: service_completed_successfully }
       gateway: { condition: service_started }
+      embeddings: { condition: service_healthy }
     build: { context: ../vendor/AgenticMind, dockerfile: Dockerfile.server }
     environment:
       DATABASE_URL: postgresql://postgres:mysecretpassword@mind-db:5432/postgres
@@ -105,15 +130,14 @@ services:
       KNOWLEDGE_CARDS_ENABLED: "true"
       KNOWLEDGE_CACHE_ENABLED: "true"
       KNOWLEDGE_GRAPHRAG_ENABLED: "false"
-      EMBED_PROVIDER: local
-      EMBED_MODEL: Xenova/bge-m3
-      EMBED_POOLING: cls
-      EMBED_CACHE_DIR: /embed-cache
-      EMBED_HF_ENDPOINT: ${EMBED_HF_ENDPOINT:-https://hf-mirror.com}
+      # embeddings served by the dedicated bge-m3 service (same model, 1024-dim)
+      EMBED_PROVIDER: openai
+      EMBED_BASE_URL: http://embeddings:11434/v1
+      EMBED_API_KEY: ollama
+      EMBED_MODEL: bge-m3
       OTEL_EXPORTER_OTLP_ENDPOINT: http://apl-ingest:4319
       OTEL_SERVICE_NAME: agenticmind
       PORT: "3000"
-    volumes: [*embed-cache]
     ports: ["3000:3000"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
@@ -123,8 +147,10 @@ services:
 
   mind-worker:
     restart: unless-stopped
+    mem_limit: 700m
     depends_on:
       mind-migrate: { condition: service_completed_successfully }
+      embeddings: { condition: service_healthy }
     build: { context: ../vendor/AgenticMind, dockerfile: Dockerfile.worker }
     environment:
       DATABASE_URL: postgresql://postgres:mysecretpassword@mind-db:5432/postgres
@@ -134,12 +160,10 @@ services:
       CHAT_API_KEY: ${MIND_GATEWAY_KEY:-platform}
       CHAT_MODEL_SIMPLE: openrouter/openai/gpt-4o-mini
       CHAT_MODEL_COMPLEX: openrouter/openai/gpt-4o
-      EMBED_PROVIDER: local
-      EMBED_MODEL: Xenova/bge-m3
-      EMBED_POOLING: cls
-      EMBED_CACHE_DIR: /embed-cache
-      EMBED_HF_ENDPOINT: ${EMBED_HF_ENDPOINT:-https://hf-mirror.com}
-    volumes: [*embed-cache]
+      EMBED_PROVIDER: openai
+      EMBED_BASE_URL: http://embeddings:11434/v1
+      EMBED_API_KEY: ollama
+      EMBED_MODEL: bge-m3
 
   # ── AgenticPerformance: evals & observability ──────────────
   apl-db:
@@ -300,7 +324,14 @@ services:
         COPY . .
     volumes:
       - ../services/ops-runner/server.ts:/app/server.ts:ro
-    environment: { PORT: "4700" }
+    environment:
+      PORT: "4700"
+      MIND_URL: http://mind-server:3000
+      MIND_TOKEN: ${HEARTBEAT_TOKEN:-}
+      GATEWAY_URL: http://gateway:8787
+      GATEWAY_KEY: ${MIND_GATEWAY_KEY:-}
+      GATEWAY_MODEL: openrouter/openai/gpt-4o-mini
+      FLEET_CRON: ${FLEET_CRON:-*/10 * * * *}
     command: ["bun", "run", "server.ts"]
     ports: ["4700:4700"]
     healthcheck:
@@ -328,3 +359,4 @@ volumes:
   apl-pgdata:
   gateway-data:
   sho-pgdata:
+  ollama-models:
