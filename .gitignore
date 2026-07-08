@@ -2,6 +2,7 @@
 .env
 .run/
 *.log
+backups/
 
 # deps & build
 node_modules/

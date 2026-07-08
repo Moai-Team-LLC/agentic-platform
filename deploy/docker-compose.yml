@@ -25,7 +25,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       - ./bifrost.config.json:/app/data/config.json:ro
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 5s
@@ -50,13 +50,18 @@ services:
       AGW_DB_PATH: /data/agw.db
       BIFROST_URL: http://bifrost:8080
       AGW_VAULT_KEY: ${AGW_VAULT_KEY:?set AGW_VAULT_KEY}
+      # NOTE: keep "false". This does NOT disable auth — an unknown key is still
+      # rejected (401). It only controls whether each tenant must have its OWN
+      # vaulted upstream credential; "true" breaks the platform's env-key
+      # passthrough (tenant has no vaulted cred). LAN exposure is closed by the
+      # 127.0.0.1 port binds, so requiring VK adds no real protection here.
       AGW_REQUIRE_VK: "false"
       AGW_EVIDENCE_SINK: file
       AGW_EVIDENCE_FILE: /data/evidence.jsonl
       OPENAI_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes: ["gateway-data:/data"]
-    ports: ["8787:8787"]
+    ports: ["127.0.0.1:8787:8787"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -94,7 +99,7 @@ services:
     volumes:
       - mind-pgdata:/home/postgres/pgdata
       - ../vendor/AgenticMind/scripts/db-init:/docker-entrypoint-initdb.d:ro
-    ports: ["5435:5432"]
+    ports: ["127.0.0.1:5435:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -138,7 +143,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://apl-ingest:4319
       OTEL_SERVICE_NAME: agenticmind
       PORT: "3000"
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -171,7 +176,7 @@ services:
     restart: unless-stopped
     environment: { POSTGRES_PASSWORD: postgres }
     volumes: ["apl-pgdata:/home/postgres/pgdata"]
-    ports: ["5439:5432"]
+    ports: ["127.0.0.1:5439:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
@@ -195,7 +200,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@apl-db:5432/postgres
       PORT: "4319"
-    ports: ["4319:4319"]
+    ports: ["127.0.0.1:4319:4319"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4319/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -236,6 +241,7 @@ services:
       APL_URL: http://apl-ingest:4319
       SELFHEAL_URL: http://selfheal:3000
       OPS_URL: http://ops-runner:4700
+      MIND_TOKEN: ${HEARTBEAT_TOKEN:-}
       MIND_PG_HOST: mind-db
       MIND_PG_PORT: "5432"
       APL_PG_HOST: apl-db
@@ -245,7 +251,7 @@ services:
     volumes:
       - gateway-data:/gateway-data:ro
       - ../.run:/run-data:ro
-    ports: ["4600:4600"]
+    ports: ["127.0.0.1:4600:4600"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4600/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -278,9 +284,9 @@ services:
         CMD ["sh","-c","bun run migrate && bun run start"]
     environment:
       DATABASE_URL: postgres://postgres:sho@sho-db:5432/sho
-      SIGNAL_SECRET: ${SIGNAL_SECRET:-dev-secret}
+      SIGNAL_SECRET: "${SIGNAL_SECRET:?set SIGNAL_SECRET — run agentic up}"
       PORT: "3000"
-    ports: ["3100:3000"]
+    ports: ["127.0.0.1:3100:3000"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -333,7 +339,7 @@ services:
       GATEWAY_MODEL: openrouter/openai/gpt-4o-mini
       FLEET_CRON: ${FLEET_CRON:-*/10 * * * *}
     command: ["bun", "run", "server.ts"]
-    ports: ["4700:4700"]
+    ports: ["127.0.0.1:4700:4700"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4700/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
