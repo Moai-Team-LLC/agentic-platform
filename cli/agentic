@@ -59,7 +59,7 @@ cmd_up() {
   if [ -z "${HEARTBEAT_TOKEN:-}" ]; then
     say "Arming the heartbeat (live traces + cost)"
     local ht; ht="$(cmd_token heartbeat 2>/dev/null | grep -oE 'ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -1)"
-    [ -n "$ht" ] && { setenv HEARTBEAT_TOKEN "$ht"; export HEARTBEAT_TOKEN="$ht"; dc up -d heartbeat >/dev/null 2>&1; ok "heartbeat armed"; } || warn "heartbeat token mint failed"
+    [ -n "$ht" ] && { setenv HEARTBEAT_TOKEN "$ht"; export HEARTBEAT_TOKEN="$ht"; dc up -d heartbeat ops-runner >/dev/null 2>&1; ok "heartbeat + fleet armed (real work)"; } || warn "heartbeat token mint failed"
   fi
   echo; ok "Platform up. Console → $(c '1;4;36' "http://localhost:$CONSOLE_PORT")"
   echo "     Try: agentic demo   ·   agentic status"
