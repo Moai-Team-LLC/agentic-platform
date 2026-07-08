@@ -3,25 +3,20 @@
 # agentic — the Agentic Platform control plane (Docker-native).
 # One command brings up the whole ecosystem as durable containers, wired: every
 # LLM call flows through AgenticGateway, every trace into AgenticPerformance.
-#
-#   agentic up        build + start the whole stack (containers), wired
-#   agentic down      stop + remove the containers (data volumes preserved)
-#   agentic status    health of every service
-#   agentic console   open the console URL
-#   agentic demo      run the closed-loop demo (ask → route → trace → scan)
-#   agentic token     mint an MCP token for AgenticMind (for Claude Code etc.)
-#   agentic logs <service>
+# Run `agentic` with no args for the full command list.
 #
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENVF="$ROOT/.env"
 COMPOSE_FILE="$ROOT/deploy/docker-compose.yml"
+BACKUP_DIR="${AGENTIC_BACKUP_DIR:-$HOME/.agentic-backups}"   # OUTSIDE the repo — never git-committed
 dc() { docker compose -f "$COMPOSE_FILE" --env-file "$ENVF" "$@"; }
 
 c() { printf "\033[%sm%s\033[0m" "$1" "$2"; }
 say() { echo "$(c '1;36' '▸') $*"; }
 ok()  { echo "  $(c '1;32' '✓') $*"; }
 warn(){ echo "  $(c '1;33' '!') $*"; }
+bad() { echo "  $(c '1;31' '✗') $*"; }
 
 load_env() {
   [ -f "$ENVF" ] || { say "creating .env from template"; sed "s#\${HOME}#$HOME#g" "$ROOT/integration/platform.env.example" > "$ENVF"; }
@@ -30,45 +25,102 @@ load_env() {
   : "${MIND_PG_PORT:=5435}" "${EMBED_CACHE_DIR:=$HOME/.cache/agenticmind-embed}"
   [ -n "${OPENROUTER_API_KEY:-}" ] || { warn "OPENROUTER_API_KEY is empty in $ENVF"; return 1; }
 }
-gen_secret() { local v="$1" val; val="$(grep -E "^$v=" "$ENVF" | cut -d= -f2-)"; [ -z "$val" ] && { val="$(openssl rand -hex 32)"; perl -i -pe "s/^$v=.*/$v=$val/" "$ENVF"; export "$v=$val"; }; return 0; }
 setenv() { local v="$1" val="$2"; grep -q "^$v=" "$ENVF" && perl -i -pe "s#^$v=.*#$v=$val#" "$ENVF" || printf '%s=%s\n' "$v" "$val" >> "$ENVF"; }
-wait_h() { local url="$1" name="$2" i=0; until curl -fsS --max-time 2 "$url" >/dev/null 2>&1 || [ $i -ge 60 ]; do sleep 2; i=$((i+1)); done; curl -fsS --max-time 2 "$url" >/dev/null 2>&1 && ok "$name up" || warn "$name not healthy — agentic logs"; }
+# generate a secret only if missing; persist via setenv (append-or-replace) so it
+# is written even when the .env line is absent, not just when it's present-but-empty.
+gen_secret() { local v="$1" val; val="$(grep -E "^$v=" "$ENVF" | cut -d= -f2-)"; [ -z "$val" ] && { val="$(openssl rand -hex 32)"; setenv "$v" "$val"; export "$v=$val"; }; return 0; }
+wait_h() { local url="$1" name="$2" i=0; until curl -fsS --max-time 2 "$url" >/dev/null 2>&1 || [ $i -ge 60 ]; do sleep 2; i=$((i+1)); done; if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then ok "$name up"; return 0; else warn "$name not healthy — agentic logs"; return 1; fi; }
+json_str() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
+# extract the answer text from an MCP streamable-HTTP (SSE) response on stdin.
+# Uses `python3 -c` (NOT a heredoc) so the piped curl output stays python's stdin.
+mcp_text() {
+  PYTHONIOENCODING=utf-8 python3 -c '
+import sys, json
+raw = sys.stdin.read()
+for part in raw.split("data:"):
+    part = part.strip()
+    if not part.startswith("{"): continue
+    try: d = json.loads(part)
+    except Exception: continue
+    r = d.get("result")
+    if not r: continue
+    t = (r.get("content") or [{}])[0].get("text", "")
+    try: t = json.loads(t).get("answer", t)
+    except Exception: pass
+    print(t); break
+'
+}
+# Is the persisted gateway tenant key still valid? The gateway authenticates at the
+# edge before routing, so a bad key => 401/403; a good key with a deliberately
+# invalid body => a non-auth error. This validates the key WITHOUT spending on a model.
+gw_key_ok() {
+  [ -n "${MIND_GATEWAY_KEY:-}" ] || return 1
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "http://localhost:${GATEWAY_PORT:-8787}/v1/chat/completions" \
+    -H "Authorization: Bearer $MIND_GATEWAY_KEY" -H "Content-Type: application/json" -d '{"model":"__ping__","messages":[]}' 2>/dev/null)"
+  [ "$code" != "401" ] && [ "$code" != "403" ]
+}
 
 cmd_up() {
   load_env || return 1
-  gen_secret AUTH_SECRET; gen_secret AGW_VAULT_KEY
+  gen_secret AUTH_SECRET; gen_secret AGW_VAULT_KEY; gen_secret SIGNAL_SECRET
   mkdir -p "$EMBED_CACHE_DIR" "$ROOT/.run"
+  local fails=0
+
+  # pre-migration snapshot: if the memory volume already exists, bring up only the
+  # DBs, snapshot them, THEN proceed (mind-migrate runs during the full up below).
+  if docker volume inspect agentic-platform_mind-pgdata >/dev/null 2>&1; then
+    say "Snapshotting data before migrations"
+    dc up -d mind-db apl-db sho-db >/dev/null 2>&1
+    local i=0; until dc exec -T mind-db pg_isready -U postgres >/dev/null 2>&1 || [ $i -ge 30 ]; do sleep 1; i=$((i+1)); done
+    cmd_backup quiet && ok "snapshot saved → $BACKUP_DIR" || warn "pre-migration snapshot skipped"
+  fi
+
   # 1. data plane + gateway first, so we can mint a tenant key before Mind/APL start.
   say "Model plane (Bifrost + Gateway)"
-  dc up -d --build bifrost gateway >/dev/null 2>&1
-  wait_h "http://localhost:$GATEWAY_PORT/health" "Gateway"
-  # 2. mint the platform tenant key (idempotent-ish: only when unset)
+  if ! dc up -d --build bifrost gateway; then bad "gateway/bifrost build or start failed — run: agentic logs gateway"; return 1; fi
+  wait_h "http://localhost:$GATEWAY_PORT/health" "Gateway" || fails=$((fails+1))
+
+  # 2. mint (or re-mint) the platform tenant key: mint if unset OR if the persisted
+  #    key no longer validates (e.g. the gateway-data volume was recreated).
+  if [ -n "${MIND_GATEWAY_KEY:-}" ] && ! gw_key_ok; then
+    warn "persisted gateway key is stale — re-minting"; setenv MIND_GATEWAY_KEY ""; export MIND_GATEWAY_KEY=""
+  fi
   if [ -z "${MIND_GATEWAY_KEY:-}" ]; then
     say "Minting the platform Gateway tenant"
     local key; key="$(dc exec -T gateway bun run src/cli.ts tenant create agenticmind --budget-usd 100 2>/dev/null | grep -oE 'sk-agw-[A-Za-z0-9_-]+' | head -1)"
     dc exec -T gateway bun run src/cli.ts routing sync --from-file fixtures/apl-eval-export.example.json >/dev/null 2>&1 || true
     [ -n "$key" ] && { setenv MIND_GATEWAY_KEY "$key"; export MIND_GATEWAY_KEY="$key"; ok "tenant key minted + wired"; } || warn "tenant mint failed — chat via gateway may 401"
   fi
+
   # 3. the rest of the stack, now with the key in .env
   say "Bringing up the full stack"
-  dc up -d --build >/dev/null 2>&1
-  wait_h "http://localhost:$MIND_PORT/health" "AgenticMind"
-  wait_h "http://localhost:$APL_INGEST_PORT/health" "AgenticPerformance"
-  wait_h "http://localhost:$CONSOLE_PORT/api/health" "Console"
+  if ! dc up -d --build; then bad "stack build or start failed — run: agentic logs"; return 1; fi
+  wait_h "http://localhost:$MIND_PORT/health" "AgenticMind" || fails=$((fails+1))
+  wait_h "http://localhost:$APL_INGEST_PORT/health" "AgenticPerformance" || fails=$((fails+1))
+  wait_h "http://localhost:$CONSOLE_PORT/api/health" "Console" || fails=$((fails+1))
+
   # 4. arm the heartbeat: mint an MCP token so traces + cost stay live on their own
   if [ -z "${HEARTBEAT_TOKEN:-}" ]; then
     say "Arming the heartbeat (live traces + cost)"
     local ht; ht="$(cmd_token heartbeat 2>/dev/null | grep -oE 'ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -1)"
-    [ -n "$ht" ] && { setenv HEARTBEAT_TOKEN "$ht"; export HEARTBEAT_TOKEN="$ht"; dc up -d heartbeat ops-runner >/dev/null 2>&1; ok "heartbeat + fleet armed (real work)"; } || warn "heartbeat token mint failed"
+    [ -n "$ht" ] && { setenv HEARTBEAT_TOKEN "$ht"; export HEARTBEAT_TOKEN="$ht"; dc up -d heartbeat ops-runner console >/dev/null 2>&1; ok "heartbeat + fleet armed (real work); console can ask Mind"; } || warn "heartbeat token mint failed"
   fi
-  echo; ok "Platform up. Console → $(c '1;4;36' "http://localhost:$CONSOLE_PORT")"
-  echo "     Try: agentic demo   ·   agentic status"
+
+  echo
+  if [ "$fails" -eq 0 ]; then
+    ok "Platform up. Console → $(c '1;4;36' "http://localhost:$CONSOLE_PORT")"
+    echo "     Try: agentic ask \"…\"   ·   agentic doctor   ·   agentic status"
+  else
+    warn "Platform is DEGRADED — $fails core service(s) not healthy. Run: agentic doctor"
+    return 1
+  fi
 }
-cmd_down()  { load_env 2>/dev/null || true; say "Stopping the stack (volumes preserved)"; dc down >/dev/null 2>&1; ok "down"; }
-cmd_status(){ load_env 2>/dev/null || true; dc ps --format '  {{.Service}}\t{{.State}}\t{{.Status}}' 2>/dev/null; }
-cmd_logs()  { load_env 2>/dev/null || true; dc logs --tail 50 "${1:-console}" 2>/dev/null; }
-cmd_console(){ load_env 2>/dev/null||true; echo "http://localhost:${CONSOLE_PORT:-4600}"; command -v open >/dev/null && open "http://localhost:${CONSOLE_PORT:-4600}" 2>/dev/null || true; }
-cmd_demo()  { load_env || return 1; bash "$ROOT/examples/closed-loop.sh"; }
+
+cmd_down()   { load_env 2>/dev/null || true; say "Stopping the stack (volumes preserved — your memory is safe)"; dc down >/dev/null 2>&1; ok "down"; }
+cmd_logs()   { load_env 2>/dev/null || true; dc logs --tail 50 "${1:-console}" 2>/dev/null; }
+cmd_console(){ load_env 2>/dev/null || true; echo "http://localhost:${CONSOLE_PORT:-4600}"; command -v open >/dev/null && open "http://localhost:${CONSOLE_PORT:-4600}" 2>/dev/null || true; }
+cmd_demo()   { load_env || return 1; bash "$ROOT/examples/closed-loop.sh"; }
 cmd_token() {
   load_env || return 1
   ( cd "$ROOT/vendor/AgenticMind" && \
@@ -76,8 +128,115 @@ cmd_token() {
     bun run scripts/issue-mcp-token.ts --label "${1:-platform}" --ttl-days 365 )
 }
 
+# aggregate health verdict + per-service states — the fast "is it ok?" from the terminal
+cmd_status() {
+  load_env 2>/dev/null || true
+  local h; h="$(curl -fsS --max-time 3 "http://localhost:${CONSOLE_PORT:-4600}/api/health" 2>/dev/null || true)"
+  if [ -n "$h" ]; then
+    local upn totn; upn="$(printf '%s' "$h" | grep -oE '"up":true' | wc -l | tr -d ' ')"; totn="$(printf '%s' "$h" | grep -oE '"up":(true|false)' | wc -l | tr -d ' ')"
+    if [ "$upn" = "$totn" ]; then echo "$(c '1;32' "● $upn/$totn services up")"; else echo "$(c '1;33' "● DEGRADED — $upn/$totn up  (agentic doctor)")"; fi
+  else
+    echo "$(c '1;31' "● console unreachable — is the platform up?  (agentic up)")"
+  fi
+  dc ps --format '  {{.Service}}\t{{.State}}\t{{.Status}}' 2>/dev/null
+}
+
+# end-to-end readiness: containers running + gateway routes + Claude's MCP path works
+cmd_doctor() {
+  load_env || return 1
+  local fail=0
+  say "Doctor — end-to-end readiness"
+  local notrun; notrun="$(dc ps --format '{{.Service}}={{.State}}' 2>/dev/null | grep -v '=running' | grep -vE 'mind-migrate|apl-migrate' || true)"
+  if [ -z "$notrun" ]; then ok "containers: all running"; else bad "not running: $(echo "$notrun" | tr '\n' ' ')"; fail=1; fi
+  local rc; rc="$(curl -fsS --max-time 25 -X POST "http://localhost:${GATEWAY_PORT:-8787}/v1/chat/completions" \
+    -H "Authorization: Bearer ${MIND_GATEWAY_KEY:-}" -H "Content-Type: application/json" \
+    -d '{"model":"openrouter/openai/gpt-4o-mini","messages":[{"role":"user","content":"reply OK"}],"max_tokens":3}' 2>/dev/null || true)"
+  if printf '%s' "$rc" | grep -q '"choices"'; then ok "gateway → OpenRouter routing works (spent a few cents)"; else bad "gateway routing FAILED (stale key or upstream down) — agentic logs gateway"; fail=1; fi
+  local tl; tl="$(curl -fsS --max-time 8 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
+    -H "Authorization: Bearer ${HEARTBEAT_TOKEN:-}" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>/dev/null || true)"
+  if printf '%s' "$tl" | grep -q 'kl_ask_global'; then ok "Claude's MCP path (AgenticMind) works — tools present"; else bad "MCP tools/list FAILED — Claude can't reach Mind (token stale? run: agentic up)"; fail=1; fi
+  echo
+  [ "$fail" -eq 0 ] && ok "All readiness checks passed." || { warn "Some checks FAILED — see above."; return 1; }
+}
+
+# ask AgenticMind a question from the terminal (uses the persisted heartbeat MCP token)
+cmd_ask() {
+  load_env || return 1
+  local q="$*"
+  [ -n "$q" ] || { warn "usage: agentic ask \"your question\""; return 1; }
+  [ -n "${HEARTBEAT_TOKEN:-}" ] || { warn "no MCP token yet — run: agentic up"; return 1; }
+  local body; body="$(printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kl_ask_global","arguments":{"question":%s}}}' "$(json_str "$q")")"
+  curl -fsS --max-time 40 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
+    -H "Authorization: Bearer $HEARTBEAT_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+    -d "$body" 2>/dev/null | mcp_text
+}
+
+# dump every database (Mind memory, APL traces, SHO incidents) + the gateway ledger.
+# Writes OUTSIDE the repo so a `git add -A` can never leak private memory.
+cmd_backup() {
+  load_env 2>/dev/null || true
+  local quiet="${1:-}"
+  local ts dir; ts="$(date +%Y%m%d-%H%M%S)"; dir="$BACKUP_DIR/$ts"; mkdir -p "$dir"
+  [ "$quiet" = quiet ] || say "Backing up databases → $dir"
+  dc exec -T mind-db pg_dump -U postgres --clean --if-exists postgres 2>/dev/null | gzip > "$dir/mind.sql.gz"
+  dc exec -T apl-db  pg_dump -U postgres --clean --if-exists postgres 2>/dev/null | gzip > "$dir/apl.sql.gz"
+  dc exec -T sho-db  pg_dump -U postgres --clean --if-exists sho      2>/dev/null | gzip > "$dir/sho.sql.gz"
+  dc cp gateway:/data/agw.db "$dir/agw.db" >/dev/null 2>&1 || true
+  dc cp gateway:/data/evidence.jsonl "$dir/evidence.jsonl" >/dev/null 2>&1 || true
+  ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +15 | xargs -I{} rm -rf {} 2>/dev/null || true   # keep last 14
+  if [ ! -s "$dir/mind.sql.gz" ] || [ "$(gzip -dc "$dir/mind.sql.gz" 2>/dev/null | wc -c | tr -d ' ')" -lt 100 ]; then
+    [ "$quiet" = quiet ] || warn "mind dump looks empty — is the platform up?"
+    return 1
+  fi
+  [ "$quiet" = quiet ] || ok "backed up (mind $(du -h "$dir/mind.sql.gz" | cut -f1) + apl + sho + gateway) → $dir"
+}
+
+# restore the databases from a backup directory (overwrites current data)
+cmd_restore() {
+  load_env || return 1
+  local dir="${1:-}"
+  [ -n "$dir" ] && [ -d "$dir" ] || { warn "usage: agentic restore <backup-dir>"; echo "  available:"; ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | head -8 | sed 's/^/    /'; return 1; }
+  say "Restoring databases from $dir  (current data will be overwritten)"
+  [ -f "$dir/mind.sql.gz" ] && gzip -dc "$dir/mind.sql.gz" | dc exec -T mind-db psql -q -U postgres postgres >/dev/null 2>&1 && ok "mind restored"
+  [ -f "$dir/apl.sql.gz" ]  && gzip -dc "$dir/apl.sql.gz"  | dc exec -T apl-db  psql -q -U postgres postgres >/dev/null 2>&1 && ok "apl restored"
+  [ -f "$dir/sho.sql.gz" ]  && gzip -dc "$dir/sho.sql.gz"  | dc exec -T sho-db  psql -q -U postgres sho      >/dev/null 2>&1 && ok "sho restored"
+  ok "restore complete"
+}
+
+# put `agentic` on PATH (no sudo — ~/.local/bin)
+cmd_install() {
+  local dest="$HOME/.local/bin"; mkdir -p "$dest"
+  ln -sf "$ROOT/cli/agentic" "$dest/agentic"; ok "linked → $dest/agentic"
+  case ":$PATH:" in
+    *":$dest:"*) ok "$dest is already on PATH — run: agentic up" ;;
+    *) warn "add $dest to PATH:  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc && source ~/.zshrc" ;;
+  esac
+}
+
+usage() {
+  cat <<'USAGE'
+agentic — the Agentic Platform control plane
+
+  agentic up               build + start the whole stack, wired
+  agentic down             stop the stack (data volumes preserved)
+  agentic status           aggregate health verdict + per-service states
+  agentic doctor           end-to-end readiness (routing + Claude's MCP path)
+  agentic ask "question"   ask AgenticMind a question from the terminal
+  agentic backup           dump all databases → ~/.agentic-backups
+  agentic restore <dir>    restore databases from a backup directory
+  agentic console          open the console (http://localhost:4600)
+  agentic demo             run the closed-loop demo (ask → route → trace → scan)
+  agentic token [label]    mint an MCP token for AgenticMind (for Claude Code)
+  agentic install          put `agentic` on your PATH (~/.local/bin)
+  agentic logs [service]   tail a service's logs
+USAGE
+}
+
 case "${1:-}" in
-  up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; console) cmd_console ;; demo) cmd_demo ;;
+  up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; doctor) cmd_doctor ;;
+  console) cmd_console ;; demo) cmd_demo ;; install) cmd_install ;;
+  ask) shift; cmd_ask "$@" ;; backup) shift; cmd_backup "$@" ;; restore) shift; cmd_restore "$@" ;;
   token) shift; cmd_token "$@" ;; logs) shift; cmd_logs "$@" ;;
-  *) sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) usage ;;
 esac
