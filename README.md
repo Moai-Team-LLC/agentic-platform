@@ -18,10 +18,18 @@ together, one shared config, one control plane. It doesn't fork or modify the pr
 ```bash
 git clone --recurse-submodules <this-repo> && cd agentic-platform
 cp integration/platform.env.example .env      # add your OPENROUTER_API_KEY
-./cli/agentic up                              # brings the whole ecosystem up, wired
-open http://localhost:4600                     # the console
-./cli/agentic demo                            # run the closed loop and watch it land
+./cli/agentic install                          # put `agentic` on your PATH (~/.local/bin)
+agentic up                                     # brings the whole ecosystem up, wired
+agentic doctor                                 # verify end-to-end (routing + Claude's MCP path)
+open http://localhost:4600                      # the console — with an "Ask AgenticMind" box
 ```
+
+**Daily use:** `agentic ask "…"` (query your knowledge base) · `agentic status` (health
+verdict) · `agentic backup` (dump your memory to `~/.agentic-backups`) · `agentic doctor`
+(is it actually working?). See **[docs/OPERATIONS.md](docs/OPERATIONS.md)** for the full
+runbook (reboot recovery, backups, troubleshooting) and
+**[docs/CLAUDE-INTEGRATION.md](docs/CLAUDE-INTEGRATION.md)** for how Claude Code uses the
+platform as its memory.
 
 ## What "wired" means
 
@@ -56,7 +64,7 @@ A single control plane (`console/`) aggregating the live ecosystem into one pane
 agentic-platform/
 ├── vendor/            ← the 7 products as pinned git submodules (never modified)
 ├── integration/      ← the unified config
-├── cli/agentic       ← the control plane: up · down · status · demo · token · logs
+├── cli/agentic       ← control plane: up·down·status·doctor·ask·backup·restore·console·demo·token·install·logs
 ├── console/          ← BFF (Bun) + web dashboard — the single pane
 ├── examples/         ← the closed-loop demo + family capability manifests
 └── deploy/           ← (compose/helm — hardening)
@@ -74,8 +82,9 @@ agentic-platform/
 
 ## Requirements
 
-[Bun](https://bun.sh) ≥ 1.3 · Docker · an OpenRouter key. The bge-m3 embedding model (~2 GB)
-downloads once into a shared cache.
+[Bun](https://bun.sh) ≥ 1.3 · Docker · an OpenRouter key. Embeddings run in a dedicated
+Ollama service (bge-m3, 1024-dim) that loads the model on demand and unloads it when idle,
+so `mind-server` stays ~140 MB. All host ports bind to `127.0.0.1` (localhost only).
 
 > **Note.** This is the integration product — it deliberately couples the pieces. The individual
 > repos remain standalone and vendor-neutral (Principle 2); adopt one, or run the whole platform here.
