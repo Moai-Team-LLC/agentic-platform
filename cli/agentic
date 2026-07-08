@@ -289,6 +289,51 @@ cmd_app() {
   fi
 }
 
+# create a real local .app (~/Applications/Agentic Console.app): a launcher with
+# the console icon that opens the chromeless window. No Electron — a 3-line shim.
+cmd_dockapp() {
+  local app="$HOME/Applications/Agentic Console.app"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+  # 1) launcher
+  cat > "$app/Contents/MacOS/launcher" <<SH
+#!/bin/bash
+exec /usr/bin/open -na "Google Chrome" --args --app=http://localhost:\${CONSOLE_PORT:-4600}
+SH
+  chmod +x "$app/Contents/MacOS/launcher"
+  # 2) Info.plist
+  cat > "$app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Agentic Console</string>
+  <key>CFBundleDisplayName</key><string>Agentic Console</string>
+  <key>CFBundleIdentifier</key><string>com.moaiteam.agentic.console</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>launcher</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
+</dict></plist>
+PLIST
+  # 3) icon.icns from the console PWA icon
+  local iconset; iconset="$(mktemp -d)/icon.iconset"; mkdir -p "$iconset"
+  for s in 16 32 64 128 256 512; do
+    sips -Z $s "$ROOT/console/web/icon-512.png" --out "$iconset/icon_${s}x${s}.png" >/dev/null 2>&1
+    sips -Z $((s*2)) "$ROOT/console/web/icon-512.png" --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null 2>&1
+  done
+  iconutil -c icns "$iconset" -o "$app/Contents/Resources/icon.icns" 2>/dev/null && ok "icon baked" || warn "icns failed (app still works)"
+  touch "$app"  # nudge Finder/LaunchServices to refresh
+  ok "app → $app"
+  # 4) pin to the Dock (skip if already pinned)
+  if ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Agentic Console.app"; then
+    defaults write com.apple.dock persistent-apps -array-add \
+      "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$app</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
+    killall Dock 2>/dev/null
+    ok "pinned to the Dock (Dock restarted)"
+  else
+    ok "already pinned to the Dock"
+  fi
+}
+
 # install the menu-bar control (SwiftBar plugin): live health dot + start/stop/console
 cmd_menubar() {
   local plugdir="$HOME/.swiftbar"
@@ -318,6 +363,7 @@ agentic — the Agentic Platform control plane
   agentic restore <dir>    restore databases from a backup directory
   agentic console          open the console (http://localhost:4600)
   agentic app              open the console as a desktop-style window (Chrome app mode)
+  agentic dockapp          create ~/Applications/Agentic Console.app + pin it to the Dock
   agentic menubar          install the menu-bar control (SwiftBar: health + start/stop)
   agentic demo             run the closed-loop demo (ask → route → trace → scan)
   agentic token [label]    mint an MCP token for AgenticMind (for Claude Code)
@@ -328,7 +374,7 @@ USAGE
 
 case "${1:-}" in
   up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; doctor) cmd_doctor ;;
-  console) cmd_console ;; app) cmd_app ;; menubar) cmd_menubar ;;
+  console) cmd_console ;; app) cmd_app ;; dockapp) cmd_dockapp ;; menubar) cmd_menubar ;;
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
   backup) shift; cmd_backup "$@" ;; restore) shift; cmd_restore "$@" ;;
