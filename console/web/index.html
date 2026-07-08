@@ -141,9 +141,14 @@
     </section>
 
     <section class="card">
-      <h2>⚙️ Runtime &amp; contract <span class="tag">AgenticOps · Standard</span></h2>
+      <h2>⚙️ Fleet &amp; runtime <span class="tag">AgenticOps</span></h2>
       <div class="body">
-        <div id="govRows" class="empty">loading…</div>
+        <div class="kpis">
+          <div class="kpi"><div class="v teal" id="fleetAgents">—</div><div class="l">agents</div></div>
+          <div class="kpi"><div class="v" id="fleetBacklog">—</div><div class="l">backlog tasks</div></div>
+        </div>
+        <table><thead><tr><th>agent</th><th class="r">health</th></tr></thead><tbody id="fleetRows"></tbody></table>
+        <div id="govRows" class="muted" style="margin-top:10px;font-size:12px"></div>
       </div>
     </section>
   </div>
@@ -233,13 +238,18 @@ async function tick(){
     `<tr><td><span class="badge">${esc(x.verdict||x.status||'—')}</span> <span class="muted">${esc(x.title||x.signal||x.id||'')}</span></td></tr>`
   ).join("") || `<tr><td class="empty">${sh.error?esc(sh.error):'no incidents — signal intake idle'}</td></tr>`
 
-  // runtime & contract (governing planes)
-  const gov = (h.ops?.up?'':'') // present
-  $("govRows").innerHTML =
-    `<div style="display:flex;flex-direction:column;gap:9px">
-      <div><span class="dot comp" style="display:inline-block;margin-right:8px"></span><b>AgenticOps</b> <span class="muted">— runtime &amp; fleet library (bounded runner · scheduler · backlog · policy)</span></div>
-      <div><span class="dot comp" style="display:inline-block;margin-right:8px"></span><b>Agentic Product Standard</b> <span class="muted">— the contract all layers conform to</span></div>
-    </div>`
+  // fleet & runtime (AgenticOps live telemetry)
+  const fl = d.fleet||{}, ags = fl.agents||[], bk = fl.backlog||{}
+  $("fleetAgents").textContent = ags.length
+  const bkTotal = (typeof bk.total==='number') ? bk.total
+    : Object.values(bk).reduce((a,b)=>a+(typeof b==='number'?b:0),0)
+  $("fleetBacklog").textContent = bkTotal ?? 0
+  $("fleetRows").innerHTML = ags.map(a=>{
+    const st = a.status||a.health||'—'
+    const good = /ok|healthy|active|up/i.test(st)
+    return `<tr><td><span class="badge agent">${esc(a.agent||a.name||'—')}</span></td><td class="r"><span class="${good?'':'muted'}" style="${good?'color:var(--up)':''}">${esc(st)}</span></td></tr>`
+  }).join("") || `<tr><td colspan="2" class="empty">${fl.error?esc(fl.error):'fleet warming up…'}</td></tr>`
+  $("govRows").innerHTML = `<span class="dot comp" style="display:inline-block;margin-right:7px"></span>governed by the <b>Agentic Product Standard</b> — the contract all layers conform to`
 
   // live indicator
   const upd = d.now ? new Date(d.now) : null

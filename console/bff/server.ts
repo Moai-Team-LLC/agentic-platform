@@ -19,6 +19,7 @@ const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8787"
 const BIFROST_URL = process.env.BIFROST_URL ?? "http://localhost:8080"
 const APL_URL = process.env.APL_URL ?? "http://localhost:4319"
 const SELFHEAL_URL = process.env.SELFHEAL_URL ?? "http://localhost:3100"
+const OPS_URL = process.env.OPS_URL ?? "http://localhost:4700"
 const MIND_PG_HOST = process.env.MIND_PG_HOST ?? "localhost"
 const MIND_PG = process.env.MIND_PG_PORT ?? "5435"
 const APL_PG_HOST = process.env.APL_PG_HOST ?? "localhost"
@@ -41,19 +42,20 @@ const up = async (url: string): Promise<boolean> => {
 }
 
 const health = async () => {
-  const [gateway, bifrost, mind, apl, sho] = await Promise.all([
+  const [gateway, bifrost, mind, apl, sho, ops] = await Promise.all([
     up(`${GATEWAY_URL}/health`),
     up(`${BIFROST_URL}/health`),
     up(`${MIND_URL}/health`),
     up(`${APL_URL}/health`),
     up(`${SELFHEAL_URL}/status`),
+    up(`${OPS_URL}/health`),
   ])
   const scanned = existsSync(sarifPath())
   return {
     // the full family — the run→remember→measure→heal→assure loop, governed by
-    // the Standard, with Ops as the runtime library.
+    // the Standard (the contract).
     standard: { role: "the contract", up: true, kind: "contract" },
-    ops: { role: "runtime & fleet", up: true, kind: "library" },
+    ops: { role: "runtime & fleet", up: ops },
     gateway: { role: "model plane", up: gateway },
     bifrost: { role: "data plane", up: bifrost },
     mind: { role: "knowledge & memory", up: mind },
@@ -87,6 +89,17 @@ const selfheal = async () => {
     return { mode: status.mode ?? "unknown", killed: status.killed ?? false, stats: status.incidents ?? {}, incidents: inc.incidents ?? [] }
   } catch {
     return { mode: "down", killed: false, stats: {}, incidents: [], error: "AgenticSelfHealingCode unreachable" }
+  }
+}
+
+const fleet = async () => {
+  try {
+    const r = await fetch(`${OPS_URL}/fleet`, { signal: AbortSignal.timeout(2500) })
+    if (!r.ok) throw new Error("bad status")
+    const f = await r.json()
+    return { agents: f.agents ?? [], backlog: f.backlog ?? {}, recent: f.recent ?? [] }
+  } catch {
+    return { agents: [], backlog: {}, recent: [], error: "AgenticOps fleet unreachable" }
   }
 }
 
@@ -185,8 +198,10 @@ Bun.serve({
         return json(await memory())
       case "/api/selfheal":
         return json(await selfheal())
+      case "/api/fleet":
+        return json(await fleet())
       case "/api/overview": {
-        const [h, t, m, s] = await Promise.all([health(), traces(), memory(), selfheal()])
+        const [h, t, m, s, fl] = await Promise.all([health(), traces(), memory(), selfheal(), fleet()])
         return json({
           health: h,
           spans: t.rows.length,
@@ -195,6 +210,7 @@ Bun.serve({
           findings: findings(),
           memory: m,
           selfheal: s,
+          fleet: fl,
           lastRefresh: lastRefresh(),
           now: new Date().toISOString(),
         })

@@ -211,6 +211,7 @@ services:
       BIFROST_URL: http://bifrost:8080
       APL_URL: http://apl-ingest:4319
       SELFHEAL_URL: http://selfheal:3000
+      OPS_URL: http://ops-runner:4700
       MIND_PG_HOST: mind-db
       MIND_PG_PORT: "5432"
       APL_PG_HOST: apl-db
@@ -285,6 +286,42 @@ services:
     volumes:
       - ../examples/manifests:/manifests:ro
       - ../.run:/run-data
+
+  # ── AgenticOps: a live demo fleet, so the console has real runtime telemetry ──
+  ops-runner:
+    restart: unless-stopped
+    build:
+      context: ../vendor/AgenticOps
+      dockerfile_inline: |
+        FROM oven/bun:1.3.11
+        WORKDIR /app
+        COPY package.json bun.lock* ./
+        RUN bun install --frozen-lockfile || bun install
+        COPY . .
+    volumes:
+      - ../services/ops-runner/server.ts:/app/server.ts:ro
+    environment: { PORT: "4700" }
+    command: ["bun", "run", "server.ts"]
+    ports: ["4700:4700"]
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4700/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── heartbeat: periodically asks Mind a question so traces + cost stay live ──
+  heartbeat:
+    image: oven/bun:1.3.11
+    restart: unless-stopped
+    depends_on:
+      mind-server: { condition: service_started }
+    volumes:
+      - ../services/heartbeat/loop.ts:/loop.ts:ro
+    environment:
+      MIND_URL: http://mind-server:3000
+      HEARTBEAT_TOKEN: ${HEARTBEAT_TOKEN:-}
+      INTERVAL: "180"
+    command: ["bun", "run", "/loop.ts"]
 
 volumes:
   mind-pgdata:
