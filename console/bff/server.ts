@@ -18,6 +18,7 @@ const MIND_URL = process.env.MIND_URL ?? "http://localhost:3000"
 const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8787"
 const BIFROST_URL = process.env.BIFROST_URL ?? "http://localhost:8080"
 const APL_URL = process.env.APL_URL ?? "http://localhost:4319"
+const SELFHEAL_URL = process.env.SELFHEAL_URL ?? "http://localhost:3100"
 const MIND_PG_HOST = process.env.MIND_PG_HOST ?? "localhost"
 const MIND_PG = process.env.MIND_PG_PORT ?? "5435"
 const APL_PG_HOST = process.env.APL_PG_HOST ?? "localhost"
@@ -40,19 +41,52 @@ const up = async (url: string): Promise<boolean> => {
 }
 
 const health = async () => {
-  const [gateway, bifrost, mind, apl] = await Promise.all([
+  const [gateway, bifrost, mind, apl, sho] = await Promise.all([
     up(`${GATEWAY_URL}/health`),
     up(`${BIFROST_URL}/health`),
     up(`${MIND_URL}/health`),
     up(`${APL_URL}/health`),
+    up(`${SELFHEAL_URL}/status`),
   ])
+  const scanned = existsSync(sarifPath())
   return {
-    // layer → { role, up } — the run→remember→measure→heal→assure loop
+    // the full family — the run→remember→measure→heal→assure loop, governed by
+    // the Standard, with Ops as the runtime library.
+    standard: { role: "the contract", up: true, kind: "contract" },
+    ops: { role: "runtime & fleet", up: true, kind: "library" },
     gateway: { role: "model plane", up: gateway },
     bifrost: { role: "data plane", up: bifrost },
     mind: { role: "knowledge & memory", up: mind },
     performance: { role: "evals & observability", up: apl },
+    selfheal: { role: "self-healing ops", up: sho },
+    assurance: { role: "security & assurance", up: scanned, kind: "scan" },
     console: { role: "control plane", up: true },
+  }
+}
+
+// where the periodic refresher writes the family scan + its timestamp
+const sarifPath = (): string =>
+  MANIFEST_SARIF !== "" ? MANIFEST_SARIF : join(ASSURANCE_DIR, "..", "..", "manifests", "agenticmind.sarif")
+const lastRefresh = (): string | null => {
+  try {
+    const f = join(sarifPath(), "..", "last-refresh.txt")
+    return existsSync(f) ? readFileSync(f, "utf8").trim() : null
+  } catch {
+    return null
+  }
+}
+
+const selfheal = async () => {
+  try {
+    const [statusRes, incRes] = await Promise.all([
+      fetch(`${SELFHEAL_URL}/status`, { signal: AbortSignal.timeout(2500) }),
+      fetch(`${SELFHEAL_URL}/incidents?limit=6`, { signal: AbortSignal.timeout(2500) }),
+    ])
+    const status = statusRes.ok ? await statusRes.json() : {}
+    const inc = incRes.ok ? await incRes.json() : { incidents: [] }
+    return { mode: status.mode ?? "unknown", killed: status.killed ?? false, stats: status.incidents ?? {}, incidents: inc.incidents ?? [] }
+  } catch {
+    return { mode: "down", killed: false, stats: {}, incidents: [], error: "AgenticSelfHealingCode unreachable" }
   }
 }
 
@@ -149,9 +183,21 @@ Bun.serve({
         return json(findings())
       case "/api/memory":
         return json(await memory())
+      case "/api/selfheal":
+        return json(await selfheal())
       case "/api/overview": {
-        const [h, t, m] = await Promise.all([health(), traces(), memory()])
-        return json({ health: h, spans: t.rows.length, agents: t.agents, cost: cost(), findings: findings(), memory: m })
+        const [h, t, m, s] = await Promise.all([health(), traces(), memory(), selfheal()])
+        return json({
+          health: h,
+          spans: t.rows.length,
+          agents: t.agents,
+          cost: cost(),
+          findings: findings(),
+          memory: m,
+          selfheal: s,
+          lastRefresh: lastRefresh(),
+          now: new Date().toISOString(),
+        })
       }
       case "/":
       case "/index.html":

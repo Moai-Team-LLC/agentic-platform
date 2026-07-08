@@ -38,6 +38,11 @@
   .dot{width:8px;height:8px;border-radius:50%;flex:none;box-shadow:0 0 0 3px #0000}
   .dot.up{background:var(--up);box-shadow:0 0 0 3px #3fb47f22}
   .dot.down{background:var(--down);box-shadow:0 0 0 3px #e0574b22}
+  .dot.comp{background:var(--teal);box-shadow:0 0 0 3px #4991ad22}
+  .live{display:inline-flex;align-items:center;gap:6px}
+  .live .b{width:7px;height:7px;border-radius:50%;background:var(--up);box-shadow:0 0 0 3px #3fb47f22;animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @media (prefers-reduced-motion: reduce){.live .b{animation:none}}
   .arrow{align-self:center;color:var(--dim);padding:0 2px;font-size:12px}
 
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -122,8 +127,27 @@
         <table><tbody id="memRows"><tr><td class="empty">memory empty</td></tr></tbody></table>
       </div>
     </section>
+
+    <section class="card">
+      <h2>🩹 Self-healing <span class="tag" id="shTag">AgenticSelfHealingCode</span></h2>
+      <div class="body">
+        <div class="kpis">
+          <div class="kpi"><div class="v teal" id="shTotal">—</div><div class="l" id="shMode">incidents</div></div>
+          <div class="kpi"><div class="v" id="shEsc">—</div><div class="l">escalated</div></div>
+          <div class="kpi"><div class="v" id="shSus">—</div><div class="l">suspicious</div></div>
+        </div>
+        <table><tbody id="shRows"><tr><td class="empty">no incidents — signal intake idle</td></tr></tbody></table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>⚙️ Runtime &amp; contract <span class="tag">AgenticOps · Standard</span></h2>
+      <div class="body">
+        <div id="govRows" class="empty">loading…</div>
+      </div>
+    </section>
   </div>
-  <div class="foot" id="foot">run → remember → measure → heal → assure · polling every 4s</div>
+  <div class="foot" id="foot"><span class="live"><span class="b"></span> live</span> · run → remember → measure → heal → assure</div>
 </main>
 <script>
 const $ = (id) => document.getElementById(id)
@@ -131,15 +155,23 @@ const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"
 const usd = (n) => "$" + (Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:4,maximumFractionDigits:6})
 
 const LOOP = [
+  ["standard","Standard","contract"],
+  ["ops","Ops","run · fleet"],
   ["gateway","Gateway","model"],
   ["mind","Mind","remember"],
   ["performance","Performance","measure"],
+  ["selfheal","SelfHealing","heal"],
+  ["assurance","Assurance","assure"],
   ["console","Console","observe"],
 ]
+function dotClass(e){
+  if(!e) return "down"
+  if(e.kind==="contract"||e.kind==="library") return "comp"
+  return e.up ? "up" : "down"
+}
 function renderLoop(h){
   $("loop").innerHTML = LOOP.map(([k,name,role],i)=>{
-    const u = h?.[k]?.up
-    const dot = `<span class="dot ${u?'up':'down'}"></span>`
+    const dot = `<span class="dot ${dotClass(h?.[k])}"></span>`
     const arr = i<LOOP.length-1 ? '<div class="arrow">→</div>' : ''
     return `<div class="node"><div class="role">${role}</div><div class="name">${dot}${name}</div></div>${arr}`
   }).join("")
@@ -190,6 +222,32 @@ async function tick(){
   $("memRows").innerHTML = (m.recent||[]).map(b=>
     `<tr><td><b>${esc(b.subject)}</b> <span class="op">${esc(b.predicate)}</span> <span class="muted">${esc(b.object)}</span></td></tr>`
   ).join("") || `<tr><td class="empty">memory empty — run the demo</td></tr>`
+
+  // self-healing
+  const sh = d.selfheal||{}, st = sh.stats||{}
+  $("shTotal").textContent = st.total ?? 0
+  $("shMode").textContent = sh.mode ? esc(sh.mode) : "incidents"
+  $("shEsc").textContent = st.escalated ?? 0
+  $("shSus").textContent = st.suspicious ?? 0
+  $("shRows").innerHTML = (sh.incidents||[]).slice(0,5).map(x=>
+    `<tr><td><span class="badge">${esc(x.verdict||x.status||'—')}</span> <span class="muted">${esc(x.title||x.signal||x.id||'')}</span></td></tr>`
+  ).join("") || `<tr><td class="empty">${sh.error?esc(sh.error):'no incidents — signal intake idle'}</td></tr>`
+
+  // runtime & contract (governing planes)
+  const gov = (h.ops?.up?'':'') // present
+  $("govRows").innerHTML =
+    `<div style="display:flex;flex-direction:column;gap:9px">
+      <div><span class="dot comp" style="display:inline-block;margin-right:8px"></span><b>AgenticOps</b> <span class="muted">— runtime &amp; fleet library (bounded runner · scheduler · backlog · policy)</span></div>
+      <div><span class="dot comp" style="display:inline-block;margin-right:8px"></span><b>Agentic Product Standard</b> <span class="muted">— the contract all layers conform to</span></div>
+    </div>`
+
+  // live indicator
+  const upd = d.now ? new Date(d.now) : null
+  const scan = d.lastRefresh ? Math.round((Date.now()-new Date(d.lastRefresh).getTime())/1000) : null
+  const ago = scan==null ? '' : scan<90 ? `${scan}s` : `${Math.round(scan/60)}m`
+  $("foot").innerHTML = `<span class="live"><span class="b"></span> live</span> · updated just now`
+    + (scan!=null ? ` · scan refreshed ${ago} ago` : '')
+    + ` · run → remember → measure → heal → assure`
 }
 tick(); setInterval(tick, 4000)
 </script>
