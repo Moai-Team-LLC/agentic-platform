@@ -274,6 +274,14 @@ Bun.serve({
       case "/":
       case "/index.html":
         return new Response(Bun.file(join(import.meta.dir, "..", "web", "index.html")))
+      // PWA assets — lets the console install as a desktop app (Add to Dock)
+      case "/manifest.webmanifest":
+      case "/icon-512.png":
+      case "/icon-192.png":
+      case "/apple-touch-icon.png": {
+        const f = Bun.file(join(import.meta.dir, "..", "web", pathname.slice(1)))
+        return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 })
+      }
       default:
         return new Response("not found", { status: 404 })
     }

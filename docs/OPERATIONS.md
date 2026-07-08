@@ -15,9 +15,22 @@ Run `./cli/agentic install` once to put `agentic` on your PATH.
 | `agentic backup` | dump all databases → `~/.agentic-backups` |
 | `agentic restore <dir>` | restore the databases from a backup directory |
 | `agentic console` | open the console (http://localhost:4600) |
+| `agentic app` | open the console as a desktop-style window (Chrome app mode) |
+| `agentic menubar` | install the menu-bar control (SwiftBar: live health + start/stop) |
 | `agentic token [label]` | mint an MCP token for AgenticMind (Claude Code) |
 | `agentic install` | put `agentic` on your PATH (`~/.local/bin`) |
 | `agentic logs [service]` | tail a service's logs |
+
+## The console as a desktop app
+
+Three zero-build options (no Electron, no Tauri):
+
+- **`agentic app`** — a chromeless Chrome app-mode window. Instant.
+- **Safari → File → Add to Dock** (on http://localhost:4600) — a real Dock icon;
+  the console ships a PWA manifest + icons, so the name and icon come out right.
+- **`agentic menubar`** — a SwiftBar menu-bar item: a live health dot (`● 9/9`),
+  per-service status, and Start / Stop / Doctor / Backup actions. This is the one
+  piece a browser sandbox can't do — it drives the `agentic` CLI natively.
 
 ## Ports — all bound to `127.0.0.1` (localhost only, never the LAN)
 

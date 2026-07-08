@@ -277,6 +277,33 @@ cmd_install() {
   esac
 }
 
+# open the console as a chromeless desktop-style window (Chrome app mode; falls
+# back to the default browser). For a dock icon, use Safari File → Add to Dock.
+cmd_app() {
+  load_env 2>/dev/null || true
+  local url="http://localhost:${CONSOLE_PORT:-4600}"
+  if [ -d "/Applications/Google Chrome.app" ]; then
+    open -na "Google Chrome" --args --app="$url" && ok "console window opened (Chrome app mode)"
+  else
+    open "$url"; warn "Chrome not found — opened in the default browser"
+  fi
+}
+
+# install the menu-bar control (SwiftBar plugin): live health dot + start/stop/console
+cmd_menubar() {
+  local plugdir="$HOME/.swiftbar"
+  mkdir -p "$plugdir"
+  cp "$ROOT/integration/menubar/agentic.15s.sh" "$plugdir/agentic.15s.sh"
+  chmod +x "$plugdir/agentic.15s.sh"
+  ok "plugin → $plugdir/agentic.15s.sh"
+  if [ -d "/Applications/SwiftBar.app" ]; then
+    defaults write com.ameba.SwiftBar PluginDirectory -string "$plugdir" 2>/dev/null || true
+    open -a SwiftBar && ok "SwiftBar running — look for the ● dot in the menu bar"
+  else
+    warn "SwiftBar not installed — run: brew install --cask swiftbar, then: agentic menubar"
+  fi
+}
+
 usage() {
   cat <<'USAGE'
 agentic — the Agentic Platform control plane
@@ -290,6 +317,8 @@ agentic — the Agentic Platform control plane
   agentic backup           dump all databases → ~/.agentic-backups
   agentic restore <dir>    restore databases from a backup directory
   agentic console          open the console (http://localhost:4600)
+  agentic app              open the console as a desktop-style window (Chrome app mode)
+  agentic menubar          install the menu-bar control (SwiftBar: health + start/stop)
   agentic demo             run the closed-loop demo (ask → route → trace → scan)
   agentic token [label]    mint an MCP token for AgenticMind (for Claude Code)
   agentic install          put `agentic` on your PATH (~/.local/bin)
@@ -299,7 +328,8 @@ USAGE
 
 case "${1:-}" in
   up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; doctor) cmd_doctor ;;
-  console) cmd_console ;; demo) cmd_demo ;; install) cmd_install ;;
+  console) cmd_console ;; app) cmd_app ;; menubar) cmd_menubar ;;
+  demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
   backup) shift; cmd_backup "$@" ;; restore) shift; cmd_restore "$@" ;;
   token) shift; cmd_token "$@" ;; logs) shift; cmd_logs "$@" ;;
