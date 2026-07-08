@@ -148,7 +148,7 @@ EOF
 # ── The console (BFF + web) ──
 up_console() {
   say "Console"
-  ensure_deps ../console/bff 2>/dev/null || { [ -d "$ROOT/console/bff/node_modules" ] || ( cd "$ROOT/console/bff" && bun install >/dev/null 2>&1 ); }
+  [ -d "$ROOT/console/bff/node_modules" ] || ( cd "$ROOT/console/bff" && bun install >/dev/null 2>&1 )
   ( cd "$ROOT/console/bff" && \
     MIND_URL="http://localhost:$MIND_PORT" GATEWAY_URL="http://localhost:$GATEWAY_PORT" \
     BIFROST_URL="http://localhost:$BIFROST_PORT" APL_URL="http://localhost:$APL_INGEST_PORT" \

@@ -27,6 +27,7 @@ echo "▸ 2/3  Ask a question — routed via Gateway, traced into Performance"
 call '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"kl_ask_global","arguments":{"question":"What routes every LLM call and what red-teams agents?"}}}'
 
 echo "▸ 3/3  Red-team the family surface with AgenticAssurance"
+[ -d "$V/AgenticAssurance/node_modules" ] || ( cd "$V/AgenticAssurance" && bun install >/dev/null 2>&1 )
 ( cd "$V/AgenticAssurance" && bun run cli -- scan "$ROOT/examples/manifests/agenticmind.json" \
     --sarif "$ROOT/.run/agenticmind.sarif" --report "$ROOT/.run/agenticmind.md" 2>&1 | tail -3 )
 
