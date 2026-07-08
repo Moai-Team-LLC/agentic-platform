@@ -18,14 +18,17 @@ const MIND_URL = process.env.MIND_URL ?? "http://localhost:3000"
 const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8787"
 const BIFROST_URL = process.env.BIFROST_URL ?? "http://localhost:8080"
 const APL_URL = process.env.APL_URL ?? "http://localhost:4319"
+const MIND_PG_HOST = process.env.MIND_PG_HOST ?? "localhost"
 const MIND_PG = process.env.MIND_PG_PORT ?? "5435"
+const APL_PG_HOST = process.env.APL_PG_HOST ?? "localhost"
 const APL_PG = process.env.APL_PG_PORT ?? "5439"
 const GATEWAY_DIR = process.env.GATEWAY_DIR ?? ""
+const GATEWAY_EVIDENCE_FILE = process.env.GATEWAY_EVIDENCE_FILE ?? ""
 const ASSURANCE_DIR = process.env.ASSURANCE_DIR ?? ""
 const MANIFEST_SARIF = process.env.MANIFEST_SARIF ?? ""
 
-const aplSql = new SQL(`postgresql://postgres:postgres@localhost:${APL_PG}/postgres`)
-const mindSql = new SQL(`postgresql://postgres:mysecretpassword@localhost:${MIND_PG}/postgres`)
+const aplSql = new SQL(`postgresql://postgres:postgres@${APL_PG_HOST}:${APL_PG}/postgres`)
+const mindSql = new SQL(`postgresql://postgres:mysecretpassword@${MIND_PG_HOST}:${MIND_PG}/postgres`)
 
 const up = async (url: string): Promise<boolean> => {
   try {
@@ -72,7 +75,7 @@ const traces = async () => {
 
 const cost = () => {
   try {
-    const f = join(GATEWAY_DIR, "data", "evidence.jsonl")
+    const f = GATEWAY_EVIDENCE_FILE !== "" ? GATEWAY_EVIDENCE_FILE : join(GATEWAY_DIR, "data", "evidence.jsonl")
     if (!existsSync(f)) return { total: 0, calls: 0, byRoute: [], recent: [] }
     const lines = readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
     const calls = lines.length

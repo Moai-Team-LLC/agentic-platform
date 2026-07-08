@@ -1,0 +1,11 @@
+Copyright (c) 2026 Moai Team LLC. All rights reserved.
+
+The Agentic Platform is the integrated assembly of the AgenticProduct family.
+Licensing for this integration layer is not yet finalized (open-core is under
+consideration). Until a license is published here, no rights are granted to use,
+copy, modify, or distribute this repository or its contents, other than to the
+copyright holder.
+
+The vendored products under `vendor/` are separate works, each under its own
+license (MIT or Apache-2.0) in its own repository; those licenses govern those
+products and are unaffected by this notice.

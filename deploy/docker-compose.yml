@@ -1,0 +1,232 @@
+# The Agentic Platform — the whole stack as durable containers, wired.
+# Run:  docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+# (the `agentic` CLI wraps this). Every LLM call flows through the gateway; every
+# trace into AgenticPerformance. Products' own Dockerfiles are reused where they
+# ship them (Mind, APL); Gateway/Console use inline Dockerfiles. Bifrost config is
+# platform-owned (deploy/bifrost.config.json) — the vendored repo is never touched.
+
+name: agentic-platform
+
+x-embed: &embed-cache ${EMBED_CACHE_DIR:-/tmp/agentic-embed}:/embed-cache
+
+services:
+  # ── data plane ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  bifrost:
+    image: maximhq/bifrost:v1.6.2
+    restart: unless-stopped
+    depends_on: [redis]
+    environment:
+      OPENAI_API_KEY: ${OPENROUTER_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    volumes:
+      - ./bifrost.config.json:/app/data/config.json:ro
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  gateway:
+    restart: unless-stopped
+    depends_on:
+      bifrost: { condition: service_healthy }
+    build:
+      context: ../vendor/AgenticGateway
+      dockerfile_inline: |
+        FROM oven/bun:1.3.11
+        WORKDIR /app
+        COPY package.json bun.lock* ./
+        RUN bun install --frozen-lockfile || bun install
+        COPY . .
+        CMD ["bun","run","src/cli.ts","serve"]
+    environment:
+      AGW_PORT: "8787"
+      AGW_DB_PATH: /data/agw.db
+      BIFROST_URL: http://bifrost:8080
+      AGW_VAULT_KEY: ${AGW_VAULT_KEY:?set AGW_VAULT_KEY}
+      AGW_REQUIRE_VK: "false"
+      AGW_EVIDENCE_SINK: file
+      AGW_EVIDENCE_FILE: /data/evidence.jsonl
+      OPENAI_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    volumes: ["gateway-data:/data"]
+    ports: ["8787:8787"]
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # ── AgenticMind: knowledge & memory ────────────────────────
+  mind-db:
+    image: timescale/timescaledb-ha:pg17
+    restart: unless-stopped
+    environment: { POSTGRES_PASSWORD: mysecretpassword }
+    volumes:
+      - mind-pgdata:/home/postgres/pgdata
+      - ../vendor/AgenticMind/scripts/db-init:/docker-entrypoint-initdb.d:ro
+    ports: ["5435:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mind-migrate:
+    depends_on:
+      mind-db: { condition: service_healthy }
+    build: { context: ../vendor/AgenticMind, dockerfile: Dockerfile.server }
+    working_dir: /app
+    entrypoint: ["bunx", "drizzle-kit", "migrate"]
+    environment:
+      DATABASE_URL: postgresql://postgres:mysecretpassword@mind-db:5432/postgres
+    restart: "no"
+
+  mind-server:
+    restart: unless-stopped
+    depends_on:
+      mind-migrate: { condition: service_completed_successfully }
+      gateway: { condition: service_started }
+    build: { context: ../vendor/AgenticMind, dockerfile: Dockerfile.server }
+    environment:
+      DATABASE_URL: postgresql://postgres:mysecretpassword@mind-db:5432/postgres
+      DATABASE_SSL: "false"
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
+      CHAT_BASE_URL: http://gateway:8787/v1
+      CHAT_API_KEY: ${MIND_GATEWAY_KEY:-platform}
+      CHAT_MODEL_SIMPLE: openrouter/openai/gpt-4o-mini
+      CHAT_MODEL_COMPLEX: openrouter/openai/gpt-4o
+      KNOWLEDGE_CARDS_ENABLED: "true"
+      KNOWLEDGE_CACHE_ENABLED: "true"
+      KNOWLEDGE_GRAPHRAG_ENABLED: "false"
+      EMBED_PROVIDER: local
+      EMBED_MODEL: Xenova/bge-m3
+      EMBED_POOLING: cls
+      EMBED_CACHE_DIR: /embed-cache
+      EMBED_HF_ENDPOINT: ${EMBED_HF_ENDPOINT:-https://hf-mirror.com}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://apl-ingest:4319
+      OTEL_SERVICE_NAME: agenticmind
+      PORT: "3000"
+    volumes: [*embed-cache]
+    ports: ["3000:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  mind-worker:
+    restart: unless-stopped
+    depends_on:
+      mind-migrate: { condition: service_completed_successfully }
+    build: { context: ../vendor/AgenticMind, dockerfile: Dockerfile.worker }
+    environment:
+      DATABASE_URL: postgresql://postgres:mysecretpassword@mind-db:5432/postgres
+      DATABASE_SSL: "false"
+      AUTH_SECRET: ${AUTH_SECRET}
+      CHAT_BASE_URL: http://gateway:8787/v1
+      CHAT_API_KEY: ${MIND_GATEWAY_KEY:-platform}
+      CHAT_MODEL_SIMPLE: openrouter/openai/gpt-4o-mini
+      CHAT_MODEL_COMPLEX: openrouter/openai/gpt-4o
+      EMBED_PROVIDER: local
+      EMBED_MODEL: Xenova/bge-m3
+      EMBED_POOLING: cls
+      EMBED_CACHE_DIR: /embed-cache
+      EMBED_HF_ENDPOINT: ${EMBED_HF_ENDPOINT:-https://hf-mirror.com}
+    volumes: [*embed-cache]
+
+  # ── AgenticPerformance: evals & observability ──────────────
+  apl-db:
+    image: timescale/timescaledb-ha:pg17
+    restart: unless-stopped
+    environment: { POSTGRES_PASSWORD: postgres }
+    volumes: ["apl-pgdata:/home/postgres/pgdata"]
+    ports: ["5439:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  apl-migrate:
+    depends_on:
+      apl-db: { condition: service_healthy }
+    build: { context: ../vendor/AgenticPerformance, dockerfile: apps/ingest/Dockerfile }
+    entrypoint: ["bunx", "drizzle-kit", "migrate"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@apl-db:5432/postgres
+    restart: "no"
+
+  apl-ingest:
+    restart: unless-stopped
+    depends_on:
+      apl-migrate: { condition: service_completed_successfully }
+    build: { context: ../vendor/AgenticPerformance, dockerfile: apps/ingest/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@apl-db:5432/postgres
+      PORT: "4319"
+    ports: ["4319:4319"]
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4319/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  apl-worker:
+    restart: unless-stopped
+    depends_on:
+      apl-migrate: { condition: service_completed_successfully }
+    build: { context: ../vendor/AgenticPerformance, dockerfile: apps/worker/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@apl-db:5432/postgres
+      APL_CHAT_BASE_URL: http://gateway:8787/v1
+      APL_CHAT_API_KEY: ${MIND_GATEWAY_KEY:-platform}
+
+  # ── the console: one pane ──────────────────────────────────
+  console:
+    restart: unless-stopped
+    depends_on:
+      mind-server: { condition: service_started }
+      apl-ingest: { condition: service_started }
+      gateway: { condition: service_started }
+    build:
+      context: ..
+      dockerfile_inline: |
+        FROM oven/bun:1.3.11
+        WORKDIR /app
+        COPY console/bff/ ./bff/
+        COPY console/web/ ./web/
+        WORKDIR /app/bff
+        CMD ["bun","run","server.ts"]
+    environment:
+      CONSOLE_PORT: "4600"
+      MIND_URL: http://mind-server:3000
+      GATEWAY_URL: http://gateway:8787
+      BIFROST_URL: http://bifrost:8080
+      APL_URL: http://apl-ingest:4319
+      MIND_PG_HOST: mind-db
+      MIND_PG_PORT: "5432"
+      APL_PG_HOST: apl-db
+      APL_PG_PORT: "5432"
+      GATEWAY_EVIDENCE_FILE: /gateway-data/evidence.jsonl
+      MANIFEST_SARIF: /run-data/agenticmind.sarif
+    volumes:
+      - gateway-data:/gateway-data:ro
+      - ../.run:/run-data:ro
+    ports: ["4600:4600"]
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4600/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  mind-pgdata:
+  apl-pgdata:
+  gateway-data:

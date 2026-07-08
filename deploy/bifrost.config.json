@@ -1,0 +1,14 @@
+{
+  "config_store": { "enabled": false },
+  "providers": {
+    "openai": {
+      "keys": [{ "name": "openai-key", "value": "env.OPENAI_API_KEY", "models": ["*"], "weight": 1.0 }]
+    },
+    "anthropic": {
+      "keys": [{ "name": "anthropic-key", "value": "env.ANTHROPIC_API_KEY", "models": ["*"], "weight": 1.0 }]
+    },
+    "openrouter": {
+      "keys": [{ "name": "openrouter-key", "value": "env.OPENROUTER_API_KEY", "models": ["*"], "weight": 1.0 }]
+    }
+  }
+}

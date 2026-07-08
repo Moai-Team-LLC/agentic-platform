@@ -10,7 +10,9 @@ set -a; . "$ROOT/.env" 2>/dev/null || true; set +a
 V="$ROOT/vendor"
 
 echo "▸ 1/3  Mint an MCP token + ingest a note into AgenticMind"
-TOK="$(cd "$V/AgenticMind" && bun run scripts/issue-mcp-token.ts --label demo --ttl-days 1 2>/dev/null | grep -oE 'ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -1)"
+TOK="$(cd "$V/AgenticMind" && \
+  DATABASE_URL="postgresql://postgres:mysecretpassword@localhost:${MIND_PG_PORT:-5435}/postgres" AUTH_SECRET="${AUTH_SECRET:-}" \
+  bun run scripts/issue-mcp-token.ts --label demo --ttl-days 1 2>/dev/null | grep -oE 'ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -1)"
 [ -z "$TOK" ] && { echo "  could not mint token — is the platform up? (agentic up)"; exit 1; }
 H=(-H "Authorization: Bearer $TOK" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream")
 call(){ curl -s --max-time 120 -N -X POST "http://localhost:$MIND_PORT/mcp" "${H[@]}" -d "$1" | sed 's/^data: //' \
