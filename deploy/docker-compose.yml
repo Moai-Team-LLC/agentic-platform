@@ -285,6 +285,10 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:sho@sho-db:5432/sho
       SIGNAL_SECRET: "${SIGNAL_SECRET:?set SIGNAL_SECRET — run agentic up}"
+      # incident pager → Telegram (outbound). Empty = adapter stays "none".
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       PORT: "3000"
     ports: ["127.0.0.1:3100:3000"]
     healthcheck:
