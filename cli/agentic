@@ -172,6 +172,38 @@ cmd_ask() {
     -d "$body" 2>/dev/null | mcp_text
 }
 
+# ingest a file — or every .md/.txt in a directory — into the knowledge base.
+# Each file is chunked, embedded, and distilled into fact cards (kl_ingest).
+cmd_ingest() {
+  load_env || return 1
+  [ -n "${HEARTBEAT_TOKEN:-}" ] || { warn "no MCP token — run: agentic up"; return 1; }
+  local target="${1:-}"
+  [ -n "$target" ] || { warn "usage: agentic ingest <file-or-directory>"; return 1; }
+  local files=()
+  if [ -d "$target" ]; then
+    while IFS= read -r f; do files+=("$f"); done < <(find "$target" -type f \( -name '*.md' -o -name '*.txt' -o -name '*.markdown' \) | sort)
+  else
+    files=("$@")   # a single file, or a shell-expanded glob
+  fi
+  local total=${#files[@]} okn=0 failn=0
+  [ "$total" -gt 0 ] || { warn "no .md/.txt files found under $target"; return 1; }
+  say "Ingesting $total file(s) into AgenticMind (chunk → embed → distil)"
+  for f in "${files[@]}"; do
+    [ -f "$f" ] && [ -s "$f" ] || { warn "skip $(basename "$f") (missing/empty)"; continue; }
+    local title body resp
+    title="$(basename "${f%.*}")"
+    # build the JSON in python (reads the file directly — proper escaping, no ARG_MAX limit)
+    body="$(python3 -c 'import json,sys
+t=open(sys.argv[2],encoding="utf-8").read()
+print(json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kl_ingest","arguments":{"title":sys.argv[1],"text":t}}}))' "$title" "$f")"
+    resp="$(curl -fsS --max-time 120 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
+      -H "Authorization: Bearer $HEARTBEAT_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+      -d "$body" 2>/dev/null)"
+    if printf '%s' "$resp" | grep -q '"result"' && ! printf '%s' "$resp" | grep -q '"isError":true'; then okn=$((okn+1)); ok "$title"; else failn=$((failn+1)); bad "$title"; fi
+  done
+  echo; ok "ingested $okn/$total (failed $failn) — see the console Knowledge pane or: agentic ask \"…\""
+}
+
 # dump every database (Mind memory, APL traces, SHO incidents) + the gateway ledger.
 # Writes OUTSIDE the repo so a `git add -A` can never leak private memory.
 cmd_backup() {
@@ -223,6 +255,7 @@ agentic — the Agentic Platform control plane
   agentic status           aggregate health verdict + per-service states
   agentic doctor           end-to-end readiness (routing + Claude's MCP path)
   agentic ask "question"   ask AgenticMind a question from the terminal
+  agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
   agentic backup           dump all databases → ~/.agentic-backups
   agentic restore <dir>    restore databases from a backup directory
   agentic console          open the console (http://localhost:4600)
@@ -236,7 +269,8 @@ USAGE
 case "${1:-}" in
   up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; doctor) cmd_doctor ;;
   console) cmd_console ;; demo) cmd_demo ;; install) cmd_install ;;
-  ask) shift; cmd_ask "$@" ;; backup) shift; cmd_backup "$@" ;; restore) shift; cmd_restore "$@" ;;
+  ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
+  backup) shift; cmd_backup "$@" ;; restore) shift; cmd_restore "$@" ;;
   token) shift; cmd_token "$@" ;; logs) shift; cmd_logs "$@" ;;
   *) usage ;;
 esac
