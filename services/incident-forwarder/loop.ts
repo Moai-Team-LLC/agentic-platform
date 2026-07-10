@@ -2,12 +2,19 @@
  * incident-forwarder — turns the platform's REAL operational failures into
  * AgenticSelfHealingCode signals. Self-contained platform self-monitoring.
  *
- * Source: the AgenticGateway ledger (evidence.jsonl) — every routed LLM call, incl.
+ * Source 1: the AgenticGateway ledger (evidence.jsonl) — every routed LLM call, incl.
  * failures (outcome matches /error|timeout|fail|exceeded/). A genuine failure is a real
  * incident; a success is skipped. We normalize the failure into a signed IncidentCandidate
  * and POST it to self-heal /webhook/otel (HMAC over the body with SIGNAL_SECRET). NO
  * fabrication — it only fires when a real call actually failed. A line-offset in a durable
  * volume prevents re-forwarding on restart; self-heal's notify-CAS dedups repeats by class.
+ *
+ * Source 2: a health WATCHDOG over the core services (direct /health pings). Docker's
+ * restart policy revives a crashed process, but a hung or manually-stopped service just
+ * sits there — the console shows a red dot and nobody gets paged. The watchdog pages:
+ * two consecutive failed pings (~60s) → ONE signed incident per outage (re-armed only
+ * after the service recovers). Caveat by design: if self-heal itself is down, there is
+ * nobody to page through — that one shows only in the console/menu bar.
  */
 import { createHmac, randomUUID } from "node:crypto"
 import { readFileSync, existsSync, writeFileSync } from "node:fs"
@@ -72,7 +79,68 @@ const signal = async (candidate: unknown): Promise<boolean> => {
   return r.ok
 }
 
+// ── health watchdog ────────────────────────────────────────
+const WATCH: Record<string, string> = {
+  gateway: "http://gateway:8787/health",
+  bifrost: "http://bifrost:8080/health",
+  mind: "http://mind-server:3000/health",
+  performance: "http://apl-ingest:4319/health",
+  "ops-runner": "http://ops-runner:4700/health",
+  console: "http://console:4600/api/health",
+}
+const DOWN_AFTER = 2 // consecutive failed pings before paging (~2×INTERVAL)
+const streak: Record<string, number> = {}
+const paged: Record<string, boolean> = {}
+
+const downCandidate = (name: string, url: string, fails: number) => ({
+  id: randomUUID(),
+  source: "otel",
+  fingerprint: `service.down:${name}`,
+  severity: 4,
+  first_seen: new Date().toISOString(),
+  occurrences: fails,
+  affected_service: `platform/${name}`,
+  affected_paths: ["deploy/docker-compose.yml"],
+  recent_deploys: [] as unknown[],
+  shape: "step",
+  raw_payload: {
+    error_class: "service.down",
+    message: `${name} failed ${fails} consecutive health checks (${url})`,
+    title: `platform service DOWN: ${name}`,
+  },
+})
+
+async function watchdogTick(): Promise<void> {
+  for (const [name, url] of Object.entries(WATCH)) {
+    let up = false
+    try {
+      up = (await fetch(url, { signal: AbortSignal.timeout(3000) })).ok
+    } catch {
+      /* down */
+    }
+    if (up) {
+      if (paged[name]) console.log(`[watchdog] ${name} recovered`) // eslint-disable-line no-console
+      streak[name] = 0
+      paged[name] = false
+      continue
+    }
+    streak[name] = (streak[name] ?? 0) + 1
+    if (streak[name] >= DOWN_AFTER && !paged[name]) {
+      paged[name] = true // one page per outage; re-arms on recovery
+      try {
+        const ok = await signal(downCandidate(name, url, streak[name]))
+        // eslint-disable-next-line no-console
+        console.log(`[watchdog] ${ok ? "→ paged" : "✗ page failed"}: ${name} DOWN`)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.log(`[watchdog] error paging ${name}: ${String(err).slice(0, 140)}`)
+      }
+    }
+  }
+}
+
 async function tick(): Promise<void> {
+  await watchdogTick().catch(() => {})
   if (!existsSync(LEDGER)) return
   const lines = readFileSync(LEDGER, "utf8").split("\n").filter(Boolean)
   let off = readOffset()

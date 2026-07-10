@@ -14,9 +14,14 @@ AG="$HOME/.local/bin/agentic"
 
 H="$(curl -fsS --max-time 2 "$CONSOLE/api/health" 2>/dev/null)"
 if [ -n "$H" ]; then
-  UP=$(printf '%s' "$H" | grep -o '"up":true'  | wc -l | tr -d ' ')
-  TOT=$(printf '%s' "$H" | grep -oE '"up":(true|false)' | wc -l | tr -d ' ')
-  if [ "$UP" = "$TOT" ]; then
+  # honest count: real services only (contract/library nodes are docs, never down)
+  read -r UP TOT <<< "$(printf '%s' "$H" | PYTHONIOENCODING=utf-8 python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print(0,0); raise SystemExit
+svc=[v for v in d.values() if isinstance(v,dict) and v.get("kind") not in ("contract","library")]
+print(sum(1 for v in svc if v.get("up")), len(svc))' 2>/dev/null)"
+  if [ "$UP" = "$TOT" ] && [ "$TOT" != "0" ]; then
     echo "● $UP/$TOT | color=#3fb47f font=Menlo size=12"
   else
     echo "◐ $UP/$TOT | color=#d9a441 font=Menlo size=12"
@@ -28,15 +33,16 @@ fi
 echo "---"
 echo "Agentic Platform | size=11 color=#7c8798"
 if [ -n "$H" ]; then
-  # per-service dots (name + up/down), parsed without jq
+  # per-service dots (name + up/down). Contract/library nodes (the Standard) are
+  # docs, not services — they can never be down, so they are noise in an ops pult.
   printf '%s' "$H" | PYTHONIOENCODING=utf-8 python3 -c '
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
 for k,v in d.items():
     if not isinstance(v,dict): continue
+    if v.get("kind") in ("contract","library"): continue
     dot = "🟢" if v.get("up") else "🔴"
-    if v.get("kind") in ("contract","library"): dot = "🔷"
     print(f"{dot} {k} | font=Menlo size=11")
 ' 2>/dev/null
 fi

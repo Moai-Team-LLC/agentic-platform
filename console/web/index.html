@@ -210,7 +210,10 @@ async function tick(){
   let d
   try{ d = await (await fetch("/api/overview")).json() }catch{ $("statusPill").textContent="console offline"; return }
   const h = d.health||{}
-  const upN = Object.values(h).filter(x=>x.up).length, tot = Object.keys(h).length
+  // honest count: only real services — contract/library nodes (the Standard) are
+  // docs, can never be down, and would only inflate the verdict
+  const real = Object.values(h).filter(x=>x && x.kind!=="contract" && x.kind!=="library")
+  const upN = real.filter(x=>x.up).length, tot = real.length
   $("statusPill").textContent = `${upN}/${tot} services up`
   $("statusPill").style.color = upN===tot ? "var(--up)" : "var(--warn)"
   renderLoop(h)
