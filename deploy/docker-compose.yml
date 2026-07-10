@@ -375,8 +375,29 @@ services:
       INTERVAL: "180"
     command: ["bun", "run", "/loop.ts"]
 
+  # ── incident-forwarder: real platform self-monitoring — turns AgenticGateway
+  #    failure outcomes (evidence.jsonl) into signed AgenticSelfHealingCode signals. ──
+  incident-forwarder:
+    image: oven/bun:1.3.11
+    restart: unless-stopped
+    depends_on:
+      selfheal: { condition: service_started }
+      gateway: { condition: service_started }
+    volumes:
+      - ../services/incident-forwarder/loop.ts:/loop.ts:ro
+      - gateway-data:/gateway-data:ro
+      - forwarder-state:/state
+    environment:
+      LEDGER_FILE: /gateway-data/evidence.jsonl
+      STATE_FILE: /state/forwarder.offset
+      SELFHEAL_URL: http://selfheal:3000
+      SIGNAL_SECRET: "${SIGNAL_SECRET:?set SIGNAL_SECRET — run agentic up}"
+      INTERVAL: "30"
+    command: ["bun", "run", "/loop.ts"]
+
 volumes:
   mind-pgdata:
+  forwarder-state:
   apl-pgdata:
   gateway-data:
   sho-pgdata:
