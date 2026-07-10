@@ -15,6 +15,7 @@
  *
  * Mounted at /app/server.ts, so `./src/index` resolves to the vendored library.
  */
+import { createHmac, randomUUID } from "node:crypto"
 import {
   AgentManifest,
   Backlog,
@@ -31,6 +32,35 @@ const GATEWAY_KEY = process.env.GATEWAY_KEY ?? ""
 const GATEWAY_MODEL = process.env.GATEWAY_MODEL ?? "openrouter/openai/gpt-4o-mini"
 const FLEET_CRON = process.env.FLEET_CRON ?? "*/10 * * * *" // real work every 10 min (cost-modest)
 const REAL = MIND_TOKEN !== "" && GATEWAY_KEY !== ""
+const SELFHEAL_URL = process.env.SELFHEAL_URL ?? ""
+const SIGNAL_SECRET = process.env.SIGNAL_SECRET ?? ""
+
+/** Report a REAL fleet failure to AgenticSelfHealingCode (signed, fire-and-forget —
+ *  self-heal being down must never break the fleet). The affected path is the actual
+ *  executor code, so RCA can git-blame the platform's own repo. */
+function reportIncident(agent: string, kind: string, message: string): void {
+  if (SELFHEAL_URL === "" || SIGNAL_SECRET === "") return
+  const body = JSON.stringify({
+    id: randomUUID(),
+    source: "otel",
+    fingerprint: `${kind}:${agent}`,
+    severity: 3,
+    first_seen: new Date().toISOString(),
+    occurrences: 1,
+    affected_service: `fleet/${agent}`,
+    affected_paths: ["services/ops-runner/server.ts"],
+    recent_deploys: [],
+    shape: "spike",
+    raw_payload: { error_class: kind, message, title: `fleet ${agent}: ${kind}` },
+  })
+  const sig = createHmac("sha256", SIGNAL_SECRET).update(body, "utf8").digest("hex")
+  void fetch(`${SELFHEAL_URL}/webhook/otel`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-signature": sig },
+    body,
+    signal: AbortSignal.timeout(60_000),
+  }).catch(() => {})
+}
 
 const mk = (name: string, model: string, mayCall: string[] = []) =>
   AgentManifest.parse({
@@ -138,6 +168,7 @@ function makeRealTurn(agentName: string, question: string) {
       return { done: true }
     } catch (e) {
       telemetry.audit({ agent: agentName, kind: "error", action: "turn.failed", detail: { turn, err: String(e).slice(0, 140) } })
+      reportIncident(agentName, "turn.failed", String(e).slice(0, 300)) // real failure → self-heal
       return { done: true } // finish gracefully — bounded, never hang
     }
   }
@@ -164,7 +195,10 @@ async function tick(): Promise<void> {
       // Always terminally ack: complete on success, else fail() so it parks after
       // maxAttempts instead of being re-claimed and re-spent forever.
       if (outcome.status === "completed") backlog.complete(task.id)
-      else backlog.fail(task.id)
+      else {
+        backlog.fail(task.id)
+        reportIncident(task.agent, `run.${outcome.status}`, `bounded run ended ${outcome.status} after ${outcome.turns} turn(s)`)
+      }
       task = backlog.claim({ leaseMs: LEASE_MS })
     }
   } finally {

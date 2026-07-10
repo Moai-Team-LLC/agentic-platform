@@ -279,6 +279,7 @@ services:
       context: ../vendor/AgenticSelfHealingCode
       dockerfile_inline: |
         FROM oven/bun:1.3.11
+        RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
         WORKDIR /app
         COPY . .
         RUN bun install --frozen-lockfile || bun install
@@ -287,6 +288,13 @@ services:
     command: ["sh", "-c", "bun run migrate && bun run /app/platform-server.ts"]
     volumes:
       - ../services/selfheal/server.ts:/app/platform-server.ts:ro
+      # git-rca over the platform's OWN repo (the code the agents run). Selective ro
+      # mounts: .git + the platform-owned dirs — vendor/ and .env stay out of the container.
+      - ../.git:/repo/.git:ro
+      - ../services:/repo/services:ro
+      - ../cli:/repo/cli:ro
+      - ../console:/repo/console:ro
+      - ../deploy:/repo/deploy:ro
     environment:
       DATABASE_URL: postgres://postgres:sho@sho-db:5432/sho
       SIGNAL_SECRET: "${SIGNAL_SECRET:?set SIGNAL_SECRET — run agentic up}"
@@ -300,6 +308,8 @@ services:
       ANTHROPIC_API_KEY: bifrost-local
       ANTHROPIC_BASE_URL: http://bifrost:8080/anthropic
       ANTHROPIC_MODEL: openrouter/anthropic/claude-opus-4.8
+      # real git-blame RCA over the platform's own repo (read-only mount above)
+      RCA_GIT_REPO: /repo
       PORT: "3000"
     ports: ["127.0.0.1:3100:3000"]
     healthcheck:
@@ -353,6 +363,9 @@ services:
       GATEWAY_KEY: ${MIND_GATEWAY_KEY:-}
       GATEWAY_MODEL: openrouter/openai/gpt-4o-mini
       FLEET_CRON: ${FLEET_CRON:-*/10 * * * *}
+      # real fleet failures (turn.failed / run.timeout / run.error) → self-heal incidents
+      SELFHEAL_URL: http://selfheal:3000
+      SIGNAL_SECRET: ${SIGNAL_SECRET:-}
     command: ["bun", "run", "server.ts"]
     ports: ["127.0.0.1:4700:4700"]
     healthcheck:
