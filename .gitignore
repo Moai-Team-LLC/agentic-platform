@@ -3,6 +3,7 @@
 .run/
 *.log
 backups/
+handout.md
 
 # deps & build
 node_modules/

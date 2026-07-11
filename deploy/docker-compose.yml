@@ -5,7 +5,10 @@
 # ship them (Mind, APL); Gateway/Console use inline Dockerfiles. Bifrost config is
 # platform-owned (deploy/bifrost.config.json) — the vendored repo is never touched.
 
-name: agentic-platform
+# The instance name: every engine deployment (per product / per client) sets its
+# own COMPOSE_PROJECT_NAME via .env (`agentic init <name>`), which isolates
+# containers, networks and volumes. Falls back to the platform's own instance.
+name: ${COMPOSE_PROJECT_NAME:-agentic-platform}
 
 x-embed: &embed-cache ${EMBED_CACHE_DIR:-/tmp/agentic-embed}:/embed-cache
 
@@ -25,7 +28,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       - ./bifrost.config.json:/app/data/config.json:ro
-    ports: ["127.0.0.1:8080:8080"]
+    ports: ["127.0.0.1:${BIFROST_PORT:-8080}:8080"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 5s
@@ -61,7 +64,7 @@ services:
       OPENAI_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes: ["gateway-data:/data"]
-    ports: ["127.0.0.1:8787:8787"]
+    ports: ["127.0.0.1:${GATEWAY_PORT:-8787}:8787"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -99,7 +102,7 @@ services:
     volumes:
       - mind-pgdata:/home/postgres/pgdata
       - ../vendor/AgenticMind/scripts/db-init:/docker-entrypoint-initdb.d:ro
-    ports: ["127.0.0.1:5435:5432"]
+    ports: ["127.0.0.1:${MIND_PG_PORT:-5435}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -143,7 +146,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://apl-ingest:4319
       OTEL_SERVICE_NAME: agenticmind
       PORT: "3000"
-    ports: ["127.0.0.1:3000:3000"]
+    ports: ["127.0.0.1:${MIND_PORT:-3000}:3000"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -176,7 +179,7 @@ services:
     restart: unless-stopped
     environment: { POSTGRES_PASSWORD: postgres }
     volumes: ["apl-pgdata:/home/postgres/pgdata"]
-    ports: ["127.0.0.1:5439:5432"]
+    ports: ["127.0.0.1:${APL_PG_PORT:-5439}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
@@ -200,7 +203,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@apl-db:5432/postgres
       PORT: "4319"
-    ports: ["127.0.0.1:4319:4319"]
+    ports: ["127.0.0.1:${APL_INGEST_PORT:-4319}:4319"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4319/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -251,15 +254,16 @@ services:
     volumes:
       - gateway-data:/gateway-data:ro
       - ../.run:/run-data:ro
-    ports: ["127.0.0.1:4600:4600"]
+    ports: ["127.0.0.1:${CONSOLE_PORT:-4600}:4600"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4600/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
       timeout: 5s
       retries: 30
 
-  # ── AgenticSelfHealingCode: self-healing ops ───────────────
+  # ── incident engine (vendored AgenticSelfHealingCode) — profile "pager" ──
   sho-db:
+    profiles: ["pager"]
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment: { POSTGRES_PASSWORD: sho, POSTGRES_DB: sho }
@@ -271,6 +275,7 @@ services:
       retries: 20
 
   selfheal:
+    profiles: ["pager"]
     restart: unless-stopped
     depends_on:
       sho-db: { condition: service_healthy }
@@ -311,7 +316,7 @@ services:
       # real git-blame RCA over the platform's own repo (read-only mount above)
       RCA_GIT_REPO: /repo
       PORT: "3000"
-    ports: ["127.0.0.1:3100:3000"]
+    ports: ["127.0.0.1:${SELFHEAL_PORT:-3100}:3000"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -321,6 +326,7 @@ services:
   # ── auto-refresh: a scheduler that periodically re-red-teams the family,
   #    so the Security pane stays current with zero manual `agentic demo`. ──
   refresher:
+    profiles: ["scan"]
     restart: unless-stopped
     build:
       context: ../vendor/AgenticAssurance
@@ -342,8 +348,10 @@ services:
       - ../examples/manifests:/manifests:ro
       - ../.run:/run-data
 
-  # ── AgenticOps: a live demo fleet, so the console has real runtime telemetry ──
+  # ── AgenticOps: a live demo fleet, so the console has real runtime telemetry.
+  #    Profile "fleet": the platform's own dogfood agents — product engines skip it. ──
   ops-runner:
+    profiles: ["fleet"]
     restart: unless-stopped
     build:
       context: ../vendor/AgenticOps
@@ -367,7 +375,7 @@ services:
       SELFHEAL_URL: http://selfheal:3000
       SIGNAL_SECRET: ${SIGNAL_SECRET:-}
     command: ["bun", "run", "server.ts"]
-    ports: ["127.0.0.1:4700:4700"]
+    ports: ["127.0.0.1:${OPS_PORT:-4700}:4700"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4700/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
@@ -376,6 +384,7 @@ services:
 
   # ── heartbeat: periodically asks Mind a question so traces + cost stay live ──
   heartbeat:
+    profiles: ["fleet"]
     image: oven/bun:1.3.11
     restart: unless-stopped
     depends_on:
@@ -391,6 +400,7 @@ services:
   # ── incident-forwarder: real platform self-monitoring — turns AgenticGateway
   #    failure outcomes (evidence.jsonl) into signed AgenticSelfHealingCode signals. ──
   incident-forwarder:
+    profiles: ["pager"]
     image: oven/bun:1.3.11
     restart: unless-stopped
     depends_on:
@@ -406,6 +416,10 @@ services:
       SELFHEAL_URL: http://selfheal:3000
       SIGNAL_SECRET: "${SIGNAL_SECRET:?set SIGNAL_SECRET — run agentic up}"
       INTERVAL: "30"
+      # instance-specific watchdog targets (name=url, comma-separated). Default =
+      # the full platform set; product engines without the fleet profile override
+      # this to drop ops-runner (else the watchdog would page a non-deployed service).
+      WATCHDOG_SERVICES: ${WATCHDOG_SERVICES:-}
     command: ["bun", "run", "/loop.ts"]
 
 volumes:

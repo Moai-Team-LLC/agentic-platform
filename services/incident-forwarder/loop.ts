@@ -80,7 +80,10 @@ const signal = async (candidate: unknown): Promise<boolean> => {
 }
 
 // ── health watchdog ────────────────────────────────────────
-const WATCH: Record<string, string> = {
+// Targets are instance-specific: WATCHDOG_SERVICES="name=url,name=url" overrides
+// the default platform set (a product engine without the fleet profile must not
+// watch ops-runner, or it would page a service that isn't deployed).
+const DEFAULT_WATCH: Record<string, string> = {
   gateway: "http://gateway:8787/health",
   bifrost: "http://bifrost:8080/health",
   mind: "http://mind-server:3000/health",
@@ -88,6 +91,16 @@ const WATCH: Record<string, string> = {
   "ops-runner": "http://ops-runner:4700/health",
   console: "http://console:4600/api/health",
 }
+const WATCH: Record<string, string> = (() => {
+  const spec = (process.env.WATCHDOG_SERVICES ?? "").trim()
+  if (spec === "") return DEFAULT_WATCH
+  const out: Record<string, string> = {}
+  for (const pair of spec.split(",")) {
+    const i = pair.indexOf("=")
+    if (i > 0) out[pair.slice(0, i).trim()] = pair.slice(i + 1).trim()
+  }
+  return Object.keys(out).length > 0 ? out : DEFAULT_WATCH
+})()
 const DOWN_AFTER = 2 // consecutive failed pings before paging (~2×INTERVAL)
 const streak: Record<string, number> = {}
 const paged: Record<string, boolean> = {}
