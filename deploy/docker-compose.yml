@@ -135,6 +135,11 @@ services:
       CHAT_API_KEY: ${MIND_GATEWAY_KEY:-platform}
       CHAT_MODEL_SIMPLE: openrouter/openai/gpt-4o-mini
       CHAT_MODEL_COMPLEX: openrouter/openai/gpt-4o
+      # §1a decorrelation: verify judges run on a DIFFERENT family (Google) than the
+      # OpenAI generators, through the same gateway. Proven egress: gemini-2.5-flash.
+      CHAT_JUDGE_MODEL: openrouter/google/gemini-2.5-flash
+      # actually run the decorrelated verify judge (else CHAT_JUDGE_MODEL is dormant)
+      KNOWLEDGE_FAITHFULNESS_TIER_B: "true"
       KNOWLEDGE_CARDS_ENABLED: "true"
       KNOWLEDGE_CACHE_ENABLED: "true"
       KNOWLEDGE_GRAPHRAG_ENABLED: "false"
@@ -168,6 +173,8 @@ services:
       CHAT_API_KEY: ${MIND_GATEWAY_KEY:-platform}
       CHAT_MODEL_SIMPLE: openrouter/openai/gpt-4o-mini
       CHAT_MODEL_COMPLEX: openrouter/openai/gpt-4o
+      # §1a decorrelation: verify judges run on Google, not the OpenAI generators.
+      CHAT_JUDGE_MODEL: openrouter/google/gemini-2.5-flash
       EMBED_PROVIDER: openai
       EMBED_BASE_URL: http://embeddings:11434/v1
       EMBED_API_KEY: ollama
