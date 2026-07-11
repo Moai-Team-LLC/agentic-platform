@@ -8,7 +8,7 @@
 # SwiftBar/xbar plugin. Refresh interval comes from the filename (15s).
 # Install: agentic menubar   (copies this into the SwiftBar plugin folder)
 
-CONSOLE="http://localhost:4600"
+CONSOLE="http://127.0.0.1:4600"
 AG="$HOME/.local/bin/agentic"
 [ -x "$AG" ] || AG="$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd)/cli/agentic"
 

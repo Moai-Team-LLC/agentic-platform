@@ -10,7 +10,7 @@ AgenticMind is registered as an MCP server in `~/.claude.json`:
 ```json
 "agenticmind": {
   "type": "http",
-  "url": "http://localhost:3000/mcp",
+  "url": "http://127.0.0.1:4390/mcp",
   "headers": { "Authorization": "Bearer <mcp-token>" }
 }
 ```

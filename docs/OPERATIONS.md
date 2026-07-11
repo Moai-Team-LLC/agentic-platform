@@ -37,7 +37,7 @@ Three zero-build options (no Electron, no Tauri):
 | Port | Service | Purpose |
 |---|---|---|
 | 4600 | console | the one pane (open in a browser) |
-| 3000 | mind-server | AgenticMind API + MCP endpoint (`/mcp`) |
+| 4390 | mind-server | AgenticMind API + MCP endpoint (`/mcp`) |
 | 8787 | gateway | AgenticGateway — OpenAI-compatible edge |
 | 8080 | bifrost | data plane |
 | 4319 | apl-ingest | AgenticPerformance — OTLP trace ingest |

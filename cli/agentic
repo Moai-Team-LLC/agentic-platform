@@ -21,7 +21,7 @@ bad() { echo "  $(c '1;31' '✗') $*"; }
 load_env() {
   [ -f "$ENVF" ] || { say "creating .env from template"; sed "s#\${HOME}#$HOME#g" "$ROOT/integration/platform.env.example" > "$ENVF"; }
   set -a; . "$ENVF"; set +a
-  : "${MIND_PORT:=3000}" "${APL_INGEST_PORT:=4319}" "${GATEWAY_PORT:=8787}" "${BIFROST_PORT:=8080}" "${CONSOLE_PORT:=4600}"
+  : "${MIND_PORT:=4390}" "${APL_INGEST_PORT:=4319}" "${GATEWAY_PORT:=8787}" "${BIFROST_PORT:=8080}" "${CONSOLE_PORT:=4600}"
   : "${MIND_PG_PORT:=5435}" "${APL_PG_PORT:=5439}" "${SELFHEAL_PORT:=3100}" "${OPS_PORT:=4700}"
   : "${EMBED_CACHE_DIR:=$HOME/.cache/agenticmind-embed}"
   # instance identity + service profiles (an engine per product = its own name,
@@ -61,7 +61,7 @@ for part in raw.split("data:"):
 gw_key_ok() {
   [ -n "${MIND_GATEWAY_KEY:-}" ] || return 1
   local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "http://localhost:${GATEWAY_PORT:-8787}/v1/chat/completions" \
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "http://127.0.0.1:${GATEWAY_PORT:-8787}/v1/chat/completions" \
     -H "Authorization: Bearer $MIND_GATEWAY_KEY" -H "Content-Type: application/json" -d '{"model":"__ping__","messages":[]}' 2>/dev/null)"
   [ "$code" != "401" ] && [ "$code" != "403" ]
 }
@@ -84,7 +84,7 @@ cmd_up() {
   # 1. data plane + gateway first, so we can mint a tenant key before Mind/APL start.
   say "Model plane (Bifrost + Gateway)"
   if ! dc up -d --build bifrost gateway; then bad "gateway/bifrost build or start failed — run: agentic logs gateway"; return 1; fi
-  wait_h "http://localhost:$GATEWAY_PORT/health" "Gateway" || fails=$((fails+1))
+  wait_h "http://127.0.0.1:$GATEWAY_PORT/health" "Gateway" || fails=$((fails+1))
 
   # 2. mint (or re-mint) the platform tenant key: mint if unset OR if the persisted
   #    key no longer validates (e.g. the gateway-data volume was recreated).
@@ -101,9 +101,9 @@ cmd_up() {
   # 3. the rest of the stack, now with the key in .env
   say "Bringing up the full stack"
   if ! dc up -d --build; then bad "stack build or start failed — run: agentic logs"; return 1; fi
-  wait_h "http://localhost:$MIND_PORT/health" "AgenticMind" || fails=$((fails+1))
-  wait_h "http://localhost:$APL_INGEST_PORT/health" "AgenticPerformance" || fails=$((fails+1))
-  wait_h "http://localhost:$CONSOLE_PORT/api/health" "Console" || fails=$((fails+1))
+  wait_h "http://127.0.0.1:$MIND_PORT/health" "AgenticMind" || fails=$((fails+1))
+  wait_h "http://127.0.0.1:$APL_INGEST_PORT/health" "AgenticPerformance" || fails=$((fails+1))
+  wait_h "http://127.0.0.1:$CONSOLE_PORT/api/health" "Console" || fails=$((fails+1))
 
   # 4. arm the heartbeat: mint an MCP token so traces + cost stay live on their own
   if [ -z "${HEARTBEAT_TOKEN:-}" ]; then
@@ -114,7 +114,7 @@ cmd_up() {
 
   echo
   if [ "$fails" -eq 0 ]; then
-    ok "Platform up. Console → $(c '1;4;36' "http://localhost:$CONSOLE_PORT")"
+    ok "Platform up. Console → $(c '1;4;36' "http://127.0.0.1:$CONSOLE_PORT")"
     echo "     Try: agentic ask \"…\"   ·   agentic doctor   ·   agentic status"
   else
     warn "Platform is DEGRADED — $fails core service(s) not healthy. Run: agentic doctor"
@@ -124,7 +124,7 @@ cmd_up() {
 
 cmd_down()   { load_env 2>/dev/null || true; say "Stopping the stack (volumes preserved — your memory is safe)"; dc down >/dev/null 2>&1; ok "down"; }
 cmd_logs()   { load_env 2>/dev/null || true; dc logs --tail 50 "${1:-console}" 2>/dev/null; }
-cmd_console(){ load_env 2>/dev/null || true; echo "http://localhost:${CONSOLE_PORT:-4600}"; command -v open >/dev/null && open "http://localhost:${CONSOLE_PORT:-4600}" 2>/dev/null || true; }
+cmd_console(){ load_env 2>/dev/null || true; echo "http://127.0.0.1:${CONSOLE_PORT:-4600}"; command -v open >/dev/null && open "http://127.0.0.1:${CONSOLE_PORT:-4600}" 2>/dev/null || true; }
 cmd_demo()   { load_env || return 1; bash "$ROOT/examples/closed-loop.sh"; }
 cmd_token() {
   load_env || return 1
@@ -139,7 +139,7 @@ cmd_token() {
 # aggregate health verdict + per-service states — the fast "is it ok?" from the terminal
 cmd_status() {
   load_env 2>/dev/null || true
-  local h; h="$(curl -fsS --max-time 3 "http://localhost:${CONSOLE_PORT:-4600}/api/health" 2>/dev/null || true)"
+  local h; h="$(curl -fsS --max-time 3 "http://127.0.0.1:${CONSOLE_PORT:-4600}/api/health" 2>/dev/null || true)"
   if [ -n "$h" ]; then
     # honest count: real services only (contract/library nodes can never be down)
     local upn totn
@@ -163,11 +163,11 @@ cmd_doctor() {
   say "Doctor — end-to-end readiness"
   local notrun; notrun="$(dc ps --format '{{.Service}}={{.State}}' 2>/dev/null | grep -v '=running' | grep -vE 'mind-migrate|apl-migrate' || true)"
   if [ -z "$notrun" ]; then ok "containers: all running"; else bad "not running: $(echo "$notrun" | tr '\n' ' ')"; fail=1; fi
-  local rc; rc="$(curl -fsS --max-time 25 -X POST "http://localhost:${GATEWAY_PORT:-8787}/v1/chat/completions" \
+  local rc; rc="$(curl -fsS --max-time 25 -X POST "http://127.0.0.1:${GATEWAY_PORT:-8787}/v1/chat/completions" \
     -H "Authorization: Bearer ${MIND_GATEWAY_KEY:-}" -H "Content-Type: application/json" \
     -d '{"model":"openrouter/openai/gpt-4o-mini","messages":[{"role":"user","content":"reply OK"}],"max_tokens":3}' 2>/dev/null || true)"
   if printf '%s' "$rc" | grep -q '"choices"'; then ok "gateway → OpenRouter routing works (spent a few cents)"; else bad "gateway routing FAILED (stale key or upstream down) — agentic logs gateway"; fail=1; fi
-  local tl; tl="$(curl -fsS --max-time 8 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
+  local tl; tl="$(curl -fsS --max-time 8 -X POST "http://127.0.0.1:${MIND_PORT:-4390}/mcp" \
     -H "Authorization: Bearer ${HEARTBEAT_TOKEN:-}" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>/dev/null || true)"
   if printf '%s' "$tl" | grep -q 'kl_ask_global'; then ok "Claude's MCP path (AgenticMind) works — tools present"; else bad "MCP tools/list FAILED — Claude can't reach Mind (token stale? run: agentic up)"; fail=1; fi
@@ -182,7 +182,7 @@ cmd_ask() {
   [ -n "$q" ] || { warn "usage: agentic ask \"your question\""; return 1; }
   [ -n "${HEARTBEAT_TOKEN:-}" ] || { warn "no MCP token yet — run: agentic up"; return 1; }
   local body; body="$(printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kl_ask_global","arguments":{"question":%s}}}' "$(json_str "$q")")"
-  curl -fsS --max-time 40 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
+  curl -fsS --max-time 40 -X POST "http://127.0.0.1:${MIND_PORT:-4390}/mcp" \
     -H "Authorization: Bearer $HEARTBEAT_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
     -d "$body" 2>/dev/null | mcp_text
 }
@@ -239,7 +239,7 @@ PY
     while IFS=$'\t' read -r ctitle cpath; do
       [ -n "$cpath" ] || continue
       local resp
-      resp="$(curl -fsS --max-time 150 -X POST "http://localhost:${MIND_PORT:-3000}/mcp" \
+      resp="$(curl -fsS --max-time 150 -X POST "http://127.0.0.1:${MIND_PORT:-4390}/mcp" \
         -H "Authorization: Bearer $HEARTBEAT_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
         --data-binary @"$cpath" 2>/dev/null)"
       rm -f "$cpath"
@@ -324,7 +324,7 @@ cmd_handout() {
   [ -n "$tok" ] || { warn "token mint failed — is the engine up?"; return 1; }
   local pager_section
   case ",${COMPOSE_PROFILES}," in
-    *",pager,"*) pager_section="- Signed webhooks: POST http://localhost:${SELFHEAL_PORT}/webhook/{sentry,otel,rum,business-metric}
+    *",pager,"*) pager_section="- Signed webhooks: POST http://127.0.0.1:${SELFHEAL_PORT}/webhook/{sentry,otel,rum,business-metric}
   (header x-signature = HMAC-SHA256(body, SIGNAL_SECRET))
 - Telegram pager: set TELEGRAM_BOT_TOKEN/CHAT_ID in .env" ;;
     *) pager_section="- (pager profile not enabled for this instance)" ;;
@@ -334,23 +334,23 @@ cmd_handout() {
 _Generated by \`agentic handout\`. Contains credentials — do not commit._
 
 ## Console (observability)
-http://localhost:${CONSOLE_PORT}
+http://127.0.0.1:${CONSOLE_PORT}
 
 ## Knowledge & memory (AgenticMind, MCP)
-- Endpoint: \`http://localhost:${MIND_PORT}/mcp\` (streamable HTTP)
+- Endpoint: \`http://127.0.0.1:${MIND_PORT}/mcp\` (streamable HTTP)
 - Bearer token: \`${tok}\`
 - Tools: kl_search · kl_ask_global · kl_get_material · kl_ingest · kl_forget · mem_recall · mem_write · mem_forget · kl_signal
 - Claude Code wiring (~/.claude.json → mcpServers):
-  \`{"type":"http","url":"http://localhost:${MIND_PORT}/mcp","headers":{"Authorization":"Bearer <token>"}}\`
+  \`{"type":"http","url":"http://127.0.0.1:${MIND_PORT}/mcp","headers":{"Authorization":"Bearer <token>"}}\`
 
 ## Model plane (AgenticGateway — OpenAI-compatible)
-- Base URL: \`http://localhost:${GATEWAY_PORT}/v1\`
+- Base URL: \`http://127.0.0.1:${GATEWAY_PORT}/v1\`
 - API key: \`${MIND_GATEWAY_KEY:-<mint: bun run src/cli.ts tenant create …>}\`
 - Model slugs: passthrough, e.g. \`openrouter/openai/gpt-4o-mini\`
 - Every call is budgeted + landed in the cost ledger (Console → Model plane)
 
 ## Traces (AgenticPerformance, OTLP)
-- OTLP endpoint: \`http://localhost:${APL_INGEST_PORT}\` (set OTEL_EXPORTER_OTLP_ENDPOINT)
+- OTLP endpoint: \`http://127.0.0.1:${APL_INGEST_PORT}\` (set OTEL_EXPORTER_OTLP_ENDPOINT)
 - Attribute your agents with \`gen_ai.agent.id\`
 
 ## Incidents (pager)
@@ -433,7 +433,7 @@ cmd_install() {
 # back to the default browser). For a dock icon, use Safari File → Add to Dock.
 cmd_app() {
   load_env 2>/dev/null || true
-  local url="http://localhost:${CONSOLE_PORT:-4600}"
+  local url="http://127.0.0.1:${CONSOLE_PORT:-4600}"
   if [ -d "/Applications/Google Chrome.app" ]; then
     open -na "Google Chrome" --args --app="$url" && ok "console window opened (Chrome app mode)"
   else
@@ -449,7 +449,7 @@ cmd_dockapp() {
   # 1) launcher
   cat > "$app/Contents/MacOS/launcher" <<SH
 #!/bin/bash
-exec /usr/bin/open -na "Google Chrome" --args --app=http://localhost:\${CONSOLE_PORT:-4600}
+exec /usr/bin/open -na "Google Chrome" --args --app=http://127.0.0.1:\${CONSOLE_PORT:-4600}
 SH
   chmod +x "$app/Contents/MacOS/launcher"
   # 2) Info.plist
@@ -519,7 +519,7 @@ agentic — the Agentic Platform control plane
   agentic outdated         show how far vendored parts are behind upstream
   agentic update [name…]   absorb upstream: snapshot → bump pins → rebuild → verify
   agentic sync             apply committed pins (after git pull / fresh clone) + rebuild
-  agentic console          open the console (http://localhost:4600)
+  agentic console          open the console (http://127.0.0.1:4600)
   agentic app              open the console as a desktop-style window (Chrome app mode)
   agentic dockapp          create ~/Applications/Agentic Console.app + pin it to the Dock
   agentic menubar          install the menu-bar control (SwiftBar: health + start/stop)
