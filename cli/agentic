@@ -363,6 +363,62 @@ EOF
   ok "handout → $f  (gitignored; hand it to the product team)"
 }
 
+# show how far each vendored submodule is behind its upstream (read-only)
+cmd_outdated() {
+  cd "$ROOT"
+  local paths; paths="$(git config -f .gitmodules --get-regexp path | awk '{print $2}')"
+  say "Vendored engine parts vs upstream"
+  for p in $paths; do
+    git -C "$p" fetch -q origin 2>/dev/null
+    git -C "$p" remote set-head origin -a >/dev/null 2>&1 || true
+    local up n; up="$(git -C "$p" rev-parse --short origin/HEAD 2>/dev/null || git -C "$p" rev-parse --short origin/main 2>/dev/null)"
+    n="$(git -C "$p" rev-list --count HEAD..origin/HEAD 2>/dev/null || echo 0)"
+    if [ "${n:-0}" = "0" ]; then ok "${p#vendor/} — up to date"; else warn "${p#vendor/} — behind $n (pin $(git -C "$p" rev-parse --short HEAD) → $up)"; fi
+  done
+}
+
+# deliberately absorb upstream: snapshot → bump pins to upstream latest → rebuild →
+# migrate (up auto-snapshots) → doctor. Pins stay reproducible; you review + commit.
+#   agentic update [name...]   default: all submodules that are behind
+cmd_update() {
+  load_env || return 1
+  cd "$ROOT"
+  say "Snapshotting before absorbing upstream (safety)"
+  cmd_backup quiet 2>/dev/null || warn "backup skipped (engine down?) — proceeding"
+  local paths; paths="$(git config -f .gitmodules --get-regexp path | awk '{print $2}')" any=0
+  for p in $paths; do
+    local nm="${p#vendor/}"
+    [ -z "$*" ] || printf ' %s ' "$*" | grep -q " $nm " || continue
+    git -C "$p" fetch -q origin 2>/dev/null
+    git -C "$p" remote set-head origin -a >/dev/null 2>&1 || true
+    local up n; up="$(git -C "$p" rev-parse origin/HEAD 2>/dev/null || git -C "$p" rev-parse origin/main 2>/dev/null)"
+    n="$(git -C "$p" rev-list --count "HEAD..$up" 2>/dev/null || echo 0)"
+    [ "${n:-0}" = "0" ] && continue
+    any=1; say "$nm: +$n"
+    git -C "$p" log --oneline --no-decorate "HEAD..$up" | sed 's/^/    /'
+    git -C "$p" checkout -q "$up"
+  done
+  [ "$any" = "0" ] && { ok "already up to date — nothing to absorb"; return 0; }
+  say "Rebuilding + migrating (pre-migration snapshot runs inside up)"
+  cmd_up || { bad "up failed after bump — ROLLBACK: git submodule update --recursive && agentic restore <~/.agentic-backups/…>"; return 1; }
+  say "Verifying end-to-end"; cmd_doctor || warn "doctor flagged issues — review before committing the pins"
+  echo
+  ok "upstream absorbed + verified. Version the new pins:"
+  echo "     git add vendor && git commit -m 'chore(vendor): bump engine submodules' && git push"
+  echo "     then each product engine: git pull && agentic sync"
+}
+
+# apply the committed submodule pins (after `git pull`, or on a fresh clone) + rebuild.
+# This is how a product engine absorbs pins the platform already versioned — reproducible.
+cmd_sync() {
+  load_env || return 1
+  cd "$ROOT"
+  say "Syncing submodules to the committed pins"
+  git submodule sync --quiet
+  git submodule update --init --recursive || { bad "submodule update failed"; return 1; }
+  say "Rebuilding + migrating"; cmd_up && cmd_doctor
+}
+
 # put `agentic` on PATH (no sudo — ~/.local/bin)
 cmd_install() {
   local dest="$HOME/.local/bin"; mkdir -p "$dest"
@@ -460,6 +516,9 @@ agentic — the Agentic Platform control plane
   agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
   agentic backup           dump all databases → ~/.agentic-backups
   agentic restore <dir>    restore databases from a backup directory
+  agentic outdated         show how far vendored parts are behind upstream
+  agentic update [name…]   absorb upstream: snapshot → bump pins → rebuild → verify
+  agentic sync             apply committed pins (after git pull / fresh clone) + rebuild
   agentic console          open the console (http://localhost:4600)
   agentic app              open the console as a desktop-style window (Chrome app mode)
   agentic dockapp          create ~/Applications/Agentic Console.app + pin it to the Dock
@@ -478,6 +537,7 @@ case "${1:-}" in
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
   backup) shift; cmd_backup "$@" ;; restore) shift; cmd_restore "$@" ;;
+  outdated) cmd_outdated ;; update) shift; cmd_update "$@" ;; sync) cmd_sync ;;
   token) shift; cmd_token "$@" ;; logs) shift; cmd_logs "$@" ;;
   *) usage ;;
 esac
