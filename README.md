@@ -31,6 +31,11 @@ runbook (reboot recovery, backups, troubleshooting) and
 **[docs/CLAUDE-INTEGRATION.md](docs/CLAUDE-INTEGRATION.md)** for how Claude Code uses the
 platform as its memory.
 
+**Give a product its own engine:** this repo is a reusable template — one clone per
+product/client, stamped with `agentic init <name>`, isolated by
+`COMPOSE_PROJECT_NAME`, deploying only the profiles it needs. See
+**[docs/DEPLOY.md](docs/DEPLOY.md)**.
+
 ## What "wired" means
 
 The platform bakes in the cross-product integration (in the standalone products these are
