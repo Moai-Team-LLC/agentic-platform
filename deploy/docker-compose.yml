@@ -28,7 +28,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       - ./bifrost.config.json:/app/data/config.json:ro
-    ports: ["127.0.0.1:${BIFROST_PORT:-8080}:8080"]
+    ports: ["127.0.0.1:${BIFROST_PORT:-4380}:8080"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 5s

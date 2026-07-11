@@ -21,7 +21,7 @@ bad() { echo "  $(c '1;31' '✗') $*"; }
 load_env() {
   [ -f "$ENVF" ] || { say "creating .env from template"; sed "s#\${HOME}#$HOME#g" "$ROOT/integration/platform.env.example" > "$ENVF"; }
   set -a; . "$ENVF"; set +a
-  : "${MIND_PORT:=4390}" "${APL_INGEST_PORT:=4319}" "${GATEWAY_PORT:=8787}" "${BIFROST_PORT:=8080}" "${CONSOLE_PORT:=4600}"
+  : "${MIND_PORT:=4390}" "${APL_INGEST_PORT:=4319}" "${GATEWAY_PORT:=8787}" "${BIFROST_PORT:=4380}" "${CONSOLE_PORT:=4600}"
   : "${MIND_PG_PORT:=5435}" "${APL_PG_PORT:=5439}" "${SELFHEAL_PORT:=3100}" "${OPS_PORT:=4700}"
   : "${EMBED_CACHE_DIR:=$HOME/.cache/agenticmind-embed}"
   # instance identity + service profiles (an engine per product = its own name,
