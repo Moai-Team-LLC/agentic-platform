@@ -147,7 +147,7 @@ cmd_status() {
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: print(0,0); raise SystemExit
-svc=[v for v in d.values() if isinstance(v,dict) and v.get("kind") not in ("contract","library")]
+svc=[v for v in d.values() if isinstance(v,dict) and v.get("kind") not in ("contract","library") and v.get("active") is not False]
 print(sum(1 for v in svc if v.get("up")), len(svc))' 2>/dev/null)"
     if [ "$upn" = "$totn" ] && [ "${totn:-0}" != "0" ]; then echo "$(c '1;32' "● $upn/$totn services up")"; else echo "$(c '1;33' "● DEGRADED — $upn/$totn up  (agentic doctor)")"; fi
   else

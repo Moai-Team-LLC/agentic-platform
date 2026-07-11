@@ -42,31 +42,40 @@ const up = async (url: string): Promise<boolean> => {
   }
 }
 
+// which compose profiles this instance runs (fleet/pager/scan). Services outside the
+// active set are NOT deployed by design (e.g. a product engine skips the dogfood
+// fleet) — they must read as "off", not "down", and not count against the verdict.
+const PROFILES = (process.env.COMPOSE_PROFILES ?? "fleet,pager,scan").split(",").map((s) => s.trim()).filter(Boolean)
+const profileOn = (p: string) => PROFILES.includes(p)
+
 const health = async () => {
+  const probe = (cond: boolean, url: string) => (cond ? up(url) : Promise.resolve(false))
   const [gateway, bifrost, mind, apl, sho, ops] = await Promise.all([
     up(`${GATEWAY_URL}/health`),
     up(`${BIFROST_URL}/health`),
     up(`${MIND_URL}/health`),
     up(`${APL_URL}/health`),
-    up(`${SELFHEAL_URL}/status`),
-    up(`${OPS_URL}/health`),
+    probe(profileOn("pager"), `${SELFHEAL_URL}/status`),
+    probe(profileOn("fleet"), `${OPS_URL}/health`),
   ])
   // assurance is "up" only if the refresher actually produced a RECENT scan — a
   // stale/dead refresher must stop reporting green (freshness, not mere existence).
   const lr = lastRefresh()
   const scanAgeSec = lr ? (Date.now() - new Date(lr).getTime()) / 1000 : null
-  const scanned = existsSync(sarifPath()) && (scanAgeSec === null || scanAgeSec < 600)
+  const scanned = profileOn("scan") && existsSync(sarifPath()) && (scanAgeSec === null || scanAgeSec < 600)
+  // a node whose profile is not active for this instance: present but not deployed
+  const off = (role: string, profile: string) => ({ role, up: false, active: false, kind: "off", profile })
   return {
     // the full family — the run→remember→measure→heal→assure loop, governed by
-    // the Standard (the contract).
+    // the Standard (the contract). Profile-gated nodes read "off" when not deployed.
     standard: { role: "the contract", up: true, kind: "contract" },
-    ops: { role: "runtime & fleet", up: ops },
+    ops: profileOn("fleet") ? { role: "runtime & fleet", up: ops } : off("runtime & fleet", "fleet"),
     gateway: { role: "model plane", up: gateway },
     bifrost: { role: "data plane", up: bifrost },
     mind: { role: "knowledge & memory", up: mind },
     performance: { role: "evals & observability", up: apl },
-    selfheal: { role: "incidents & pager", up: sho },
-    assurance: { role: "security & assurance", up: scanned, kind: "scan" },
+    selfheal: profileOn("pager") ? { role: "incidents & pager", up: sho } : off("incidents & pager", "pager"),
+    assurance: profileOn("scan") ? { role: "security & assurance", up: scanned, kind: "scan" } : off("security & assurance", "scan"),
     console: { role: "control plane", up: true },
   }
 }

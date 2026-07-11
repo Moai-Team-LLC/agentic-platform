@@ -252,6 +252,8 @@ services:
       SELFHEAL_URL: http://selfheal:3000
       OPS_URL: http://ops-runner:4700
       MIND_TOKEN: ${HEARTBEAT_TOKEN:-}
+      # so the console shows profile-inactive services as "off", not "down"
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-fleet,pager,scan}
       MIND_PG_HOST: mind-db
       MIND_PG_PORT: "5432"
       APL_PG_HOST: apl-db

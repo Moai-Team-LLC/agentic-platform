@@ -47,6 +47,8 @@
   .dot.up{background:var(--up);box-shadow:0 0 0 3px #3fb47f22}
   .dot.down{background:var(--down);box-shadow:0 0 0 3px #e0574b22}
   .dot.comp{background:var(--teal);box-shadow:0 0 0 3px #4991ad22}
+  .dot.off{background:var(--dim);box-shadow:none} /* not deployed in this profile */
+  .node.off .role,.node.off .name{opacity:.45}
   .live{display:inline-flex;align-items:center;gap:6px}
   .live .b{width:7px;height:7px;border-radius:50%;background:var(--up);box-shadow:0 0 0 3px #3fb47f22;animation:pulse 2s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -196,14 +198,16 @@ const LOOP = [
 ]
 function dotClass(e){
   if(!e) return "down"
+  if(e.active===false) return "off"                 // profile not deployed on this instance
   if(e.kind==="contract"||e.kind==="library") return "comp"
   return e.up ? "up" : "down"
 }
 function renderLoop(h){
   $("loop").innerHTML = LOOP.map(([k,name,role],i)=>{
-    const dot = `<span class="dot ${dotClass(h?.[k])}"></span>`
+    const e = h?.[k], cls = dotClass(e)
+    const dot = `<span class="dot ${cls}"></span>`
     const arr = i<LOOP.length-1 ? '<div class="arrow">→</div>' : ''
-    return `<div class="node"><div class="role">${role}</div><div class="name">${dot}${name}</div></div>${arr}`
+    return `<div class="node${cls==='off'?' off':''}"><div class="role">${role}</div><div class="name">${dot}${name}</div></div>${arr}`
   }).join("")
 }
 async function tick(){
@@ -212,7 +216,7 @@ async function tick(){
   const h = d.health||{}
   // honest count: only real services — contract/library nodes (the Standard) are
   // docs, can never be down, and would only inflate the verdict
-  const real = Object.values(h).filter(x=>x && x.kind!=="contract" && x.kind!=="library")
+  const real = Object.values(h).filter(x=>x && x.kind!=="contract" && x.kind!=="library" && x.active!==false)
   const upN = real.filter(x=>x.up).length, tot = real.length
   $("statusPill").textContent = `${upN}/${tot} services up`
   $("statusPill").style.color = upN===tot ? "var(--up)" : "var(--warn)"
@@ -276,7 +280,7 @@ async function tick(){
     const st = a.status||a.health||'—'
     const good = /ok|healthy|active|up/i.test(st)
     return `<tr><td><span class="badge agent">${esc(a.agent||a.name||'—')}</span></td><td class="r"><span class="${good?'':'muted'}" style="${good?'color:var(--up)':''}">${esc(st)}</span></td></tr>`
-  }).join("") || `<tr><td colspan="2" class="empty">${fl.error?esc(fl.error):'fleet warming up…'}</td></tr>`
+  }).join("") || `<tr><td colspan="2" class="empty">${h.ops&&h.ops.active===false?'fleet profile disabled for this engine':(fl.error?esc(fl.error):'fleet warming up…')}</td></tr>`
   $("govRows").innerHTML = `<span class="dot comp" style="display:inline-block;margin-right:7px"></span>governed by the <b>Agentic Product Standard</b> — the contract all layers conform to`
 
   // live indicator + model-plane liveness (last routed call)

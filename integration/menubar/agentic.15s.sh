@@ -19,7 +19,7 @@ if [ -n "$H" ]; then
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: print(0,0); raise SystemExit
-svc=[v for v in d.values() if isinstance(v,dict) and v.get("kind") not in ("contract","library")]
+svc=[v for v in d.values() if isinstance(v,dict) and v.get("kind") not in ("contract","library") and v.get("active") is not False]
 print(sum(1 for v in svc if v.get("up")), len(svc))' 2>/dev/null)"
   if [ "$UP" = "$TOT" ] && [ "$TOT" != "0" ]; then
     echo "● $UP/$TOT | color=#3fb47f font=Menlo size=12"
@@ -42,6 +42,7 @@ except Exception: sys.exit(0)
 for k,v in d.items():
     if not isinstance(v,dict): continue
     if v.get("kind") in ("contract","library"): continue
+    if v.get("active") is False: continue            # not deployed in this profile
     dot = "🟢" if v.get("up") else "🔴"
     print(f"{dot} {k} | font=Menlo size=11")
 ' 2>/dev/null

@@ -102,8 +102,15 @@ const WATCH: Record<string, string> = (() => {
   return Object.keys(out).length > 0 ? out : DEFAULT_WATCH
 })()
 const DOWN_AFTER = 2 // consecutive failed pings before paging (~2×INTERVAL)
+// Startup grace: on first boot, services come up over a few minutes (image builds,
+// migrations, model load). Don't page a service that has NEVER been healthy yet
+// while inside the grace window — that's "still starting", not an outage. A service
+// that WAS healthy and then dropped pages immediately, grace or not (real regression).
+const GRACE_MS = Number(process.env.WATCHDOG_GRACE_SEC ?? 240) * 1000
+const startedAt = Date.now()
 const streak: Record<string, number> = {}
 const paged: Record<string, boolean> = {}
+const everUp: Record<string, boolean> = {}
 
 const downCandidate = (name: string, url: string, fails: number) => ({
   id: randomUUID(),
@@ -135,10 +142,13 @@ async function watchdogTick(): Promise<void> {
       if (paged[name]) console.log(`[watchdog] ${name} recovered`) // eslint-disable-line no-console
       streak[name] = 0
       paged[name] = false
+      everUp[name] = true
       continue
     }
     streak[name] = (streak[name] ?? 0) + 1
-    if (streak[name] >= DOWN_AFTER && !paged[name]) {
+    // suppress first-boot noise: never-yet-healthy service inside the grace window
+    const stillStarting = !everUp[name] && Date.now() - startedAt < GRACE_MS
+    if (streak[name] >= DOWN_AFTER && !paged[name] && !stillStarting) {
       paged[name] = true // one page per outage; re-arms on recovery
       try {
         const ok = await signal(downCandidate(name, url, streak[name]))
