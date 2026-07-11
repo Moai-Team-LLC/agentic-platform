@@ -65,7 +65,7 @@ const health = async () => {
     bifrost: { role: "data plane", up: bifrost },
     mind: { role: "knowledge & memory", up: mind },
     performance: { role: "evals & observability", up: apl },
-    selfheal: { role: "self-healing ops", up: sho },
+    selfheal: { role: "incidents & pager", up: sho },
     assurance: { role: "security & assurance", up: scanned, kind: "scan" },
     console: { role: "control plane", up: true },
   }

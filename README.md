@@ -10,7 +10,7 @@
 
 ---
 
-Seven standalone products (a standard + six reference implementations) each stay adoptable on
+Six standalone repos (a standard + five reference implementations) each stay adoptable on
 their own. **This** repo is the opposite bet: the *integrated* platform — the pieces hard-wired
 together, one shared config, one control plane. It doesn't fork or modify the products; it
 **vendors them as submodules** and composes them.
@@ -76,9 +76,13 @@ agentic-platform/
 ⚙️ [AgenticOps](https://github.com/Moai-Team-LLC/AgenticOps) ·
 🧠 [AgenticMind](https://github.com/Moai-Team-LLC/AgenticMind) ·
 📈 [AgenticPerformance](https://github.com/Moai-Team-LLC/AgenticPerformance) ·
-🩹 [AgenticSelfHealingCode](https://github.com/Moai-Team-LLC/AgenticSelfHealingCode) ·
 🛡️ [AgenticAssurance](https://github.com/Moai-Team-LLC/AgenticAssurance) ·
 🚪 [AgenticGateway](https://github.com/Moai-Team-LLC/AgenticGateway)
+
+Plus one piece of **internal infrastructure** (not part of the product line):
+[AgenticSelfHealingCode](https://github.com/Moai-Team-LLC/AgenticSelfHealingCode), vendored as
+the platform's incident engine — it takes signed failure signals (agent failures, routing
+failures, service-down watchdog), runs live LLM + git-blame RCA, and pages Telegram.
 
 ## Requirements
 
