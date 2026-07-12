@@ -137,7 +137,7 @@ const traces = async () => {
 const cost = () => {
   try {
     const f = GATEWAY_EVIDENCE_FILE !== "" ? GATEWAY_EVIDENCE_FILE : join(GATEWAY_DIR, "data", "evidence.jsonl")
-    if (!existsSync(f)) return { total: 0, calls: 0, byRoute: [], recent: [] }
+    if (!existsSync(f)) return { total: 0, calls: 0, byRoute: [], byTenant: [], recent: [] }
     const lines = readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
     const calls = lines.length
     const total = lines.reduce((s, e) => s + (e.cost_usd ?? 0), 0)
@@ -148,10 +148,20 @@ const cost = () => {
       byRouteMap.set(k, { n: cur.n + 1, cost: cur.cost + (e.cost_usd ?? 0) })
     }
     const byRoute = [...byRouteMap.entries()].map(([route, v]) => ({ route, ...v })).sort((a, b) => b.n - a.n)
+    // Per-tenant spend — the table a multi-tenant product's admin needs:
+    // who is burning the budget. tenant_id comes from the gateway evidence
+    // (virtual-key / caller attribution); absent = "unknown".
+    const byTenantMap = new Map<string, { n: number; cost: number }>()
+    for (const e of lines) {
+      const k = e.tenant_id != null && String(e.tenant_id).trim() !== "" ? String(e.tenant_id) : "unknown"
+      const cur = byTenantMap.get(k) ?? { n: 0, cost: 0 }
+      byTenantMap.set(k, { n: cur.n + 1, cost: cur.cost + (e.cost_usd ?? 0) })
+    }
+    const byTenant = [...byTenantMap.entries()].map(([tenant, v]) => ({ tenant, ...v })).sort((a, b) => b.cost - a.cost)
     const recent = lines.slice(-15).reverse().map((e) => ({ route: e.route, cost: e.cost_usd, outcome: e.outcome, tenant: e.tenant_id }))
-    return { total, calls, byRoute, recent }
+    return { total, calls, byRoute, byTenant, recent }
   } catch {
-    return { total: 0, calls: 0, byRoute: [], recent: [], error: "gateway evidence unreadable" }
+    return { total: 0, calls: 0, byRoute: [], byTenant: [], recent: [], error: "gateway evidence unreadable" }
   }
 }
 

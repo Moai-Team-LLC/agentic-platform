@@ -34,7 +34,10 @@ platform as its memory.
 **Give a product its own engine:** this repo is a reusable template — one clone per
 product/client, stamped with `agentic init <name>`, isolated by
 `COMPOSE_PROJECT_NAME`, deploying only the profiles it needs. See
-**[docs/DEPLOY.md](docs/DEPLOY.md)**.
+**[docs/DEPLOY.md](docs/DEPLOY.md)**. To surface the engine's live data (cost per
+tenant, memory, incidents) inside a product's **own admin panel**, consume the
+console's JSON API — **[docs/CONSOLE-API.md](docs/CONSOLE-API.md)** +
+[`examples/admin-proxy.ts`](examples/admin-proxy.ts).
 
 ## What "wired" means
 
