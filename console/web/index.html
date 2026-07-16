@@ -156,18 +156,6 @@
     </section>
 
     <section class="card">
-      <h2>🚨 Incidents · pager <span class="tag" id="shTag">incident engine</span></h2>
-      <div class="body">
-        <div class="kpis">
-          <div class="kpi"><div class="v teal" id="shTotal">—</div><div class="l" id="shMode">incidents</div></div>
-          <div class="kpi"><div class="v" id="shEsc">—</div><div class="l">escalated</div></div>
-          <div class="kpi"><div class="v" id="shSus">—</div><div class="l">suspicious</div></div>
-        </div>
-        <table><tbody id="shRows"><tr><td class="empty">no incidents — signal intake idle</td></tr></tbody></table>
-      </div>
-    </section>
-
-    <section class="card">
       <h2>⚙️ Fleet &amp; runtime <span class="tag">AgenticOps</span></h2>
       <div class="body">
         <div class="kpis">
@@ -179,7 +167,7 @@
       </div>
     </section>
   </div>
-  <div class="foot" id="foot"><span class="live"><span class="b"></span> live</span> · run → remember → measure → heal → assure</div>
+  <div class="foot" id="foot"><span class="live"><span class="b"></span> live</span> · run → remember → measure → assure</div>
 </main>
 <script>
 const $ = (id) => document.getElementById(id)
@@ -192,7 +180,6 @@ const LOOP = [
   ["gateway","Gateway","model"],
   ["mind","Mind","remember"],
   ["performance","Performance","measure"],
-  ["selfheal","Incidents","page"],
   ["assurance","Assurance","assure"],
   ["console","Console","observe"],
 ]
@@ -260,16 +247,6 @@ async function tick(){
     `<tr><td><b>${esc(b.subject)}</b> <span class="op">${esc(b.predicate)}</span> <span class="muted">${esc(b.object)}</span></td></tr>`
   ).join("") || `<tr><td class="${m.error?'err':'empty'}">${m.error?esc(m.error):'memory empty — ask a question or run the demo'}</td></tr>`
 
-  // self-healing
-  const sh = d.selfheal||{}, st = sh.stats||{}
-  $("shTotal").textContent = st.total ?? 0
-  $("shMode").textContent = sh.mode ? esc(sh.mode) : "incidents"
-  $("shEsc").textContent = st.escalated ?? 0
-  $("shSus").textContent = st.suspicious ?? 0
-  $("shRows").innerHTML = (sh.incidents||[]).slice(0,5).map(x=>
-    `<tr><td><span class="badge">${esc(x.verdict||x.status||'—')}</span> <span class="muted">${esc(x.title||x.signal||x.id||'')}</span></td></tr>`
-  ).join("") || `<tr><td class="empty">${sh.error?esc(sh.error):'no incidents — signal intake idle'}</td></tr>`
-
   // fleet & runtime (AgenticOps live telemetry)
   const fl = d.fleet||{}, ags = fl.agents||[], bk = fl.backlog||{}
   $("fleetAgents").textContent = ags.length
@@ -292,7 +269,7 @@ async function tick(){
   $("foot").innerHTML = `<span class="live"><span class="b"></span> live</span> · updated just now`
     + (scan!=null ? ` · scan refreshed ${ago} ago` : '')
     + (lc!=null ? ` · <span class="${lcStale?'stale':''}">model plane ${lcStale?'idle':'active'} — last call ${lcStr} ago</span>` : '')
-    + ` · run → remember → measure → heal → assure`
+    + ` · run → remember → measure → assure`
 }
 
 // interactive: ask AgenticMind from the console (POST /api/ask → MCP kl_ask_global)

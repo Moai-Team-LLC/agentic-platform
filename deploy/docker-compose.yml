@@ -249,11 +249,10 @@ services:
       GATEWAY_URL: http://gateway:8787
       BIFROST_URL: http://bifrost:8080
       APL_URL: http://apl-ingest:4319
-      SELFHEAL_URL: http://selfheal:3000
       OPS_URL: http://ops-runner:4700
       MIND_TOKEN: ${HEARTBEAT_TOKEN:-}
       # so the console shows profile-inactive services as "off", not "down"
-      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-fleet,pager,scan}
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-fleet,scan}
       MIND_PG_HOST: mind-db
       MIND_PG_PORT: "5432"
       APL_PG_HOST: apl-db
@@ -266,68 +265,6 @@ services:
     ports: ["127.0.0.1:${CONSOLE_PORT:-4600}:4600"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4600/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-
-  # ── incident engine (vendored AgenticSelfHealingCode) — profile "pager" ──
-  sho-db:
-    profiles: ["pager"]
-    image: pgvector/pgvector:pg16
-    restart: unless-stopped
-    environment: { POSTGRES_PASSWORD: sho, POSTGRES_DB: sho }
-    volumes: ["sho-pgdata:/var/lib/postgresql/data"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d sho"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  selfheal:
-    profiles: ["pager"]
-    restart: unless-stopped
-    depends_on:
-      sho-db: { condition: service_healthy }
-      bifrost: { condition: service_started }
-    build:
-      context: ../vendor/AgenticSelfHealingCode
-      dockerfile_inline: |
-        FROM oven/bun:1.3.11
-        RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-        WORKDIR /app
-        COPY . .
-        RUN bun install --frozen-lockfile || bun install
-        CMD ["sh","-c","bun run migrate && bun run start"]
-    # platform override: run the thin shim (env-driven LLM model) instead of the vendored start
-    command: ["sh", "-c", "bun run migrate && bun run /app/platform-server.ts"]
-    volumes:
-      - ../services/selfheal/server.ts:/app/platform-server.ts:ro
-      # git-rca over the platform's OWN repo (the code the agents run). Selective ro
-      # mounts: .git + the platform-owned dirs — vendor/ and .env stay out of the container.
-      - ../.git:/repo/.git:ro
-      - ../services:/repo/services:ro
-      - ../cli:/repo/cli:ro
-      - ../console:/repo/console:ro
-      - ../deploy:/repo/deploy:ro
-    environment:
-      DATABASE_URL: postgres://postgres:sho@sho-db:5432/sho
-      SIGNAL_SECRET: "${SIGNAL_SECRET:?set SIGNAL_SECRET — run agentic up}"
-      # incident pager → Telegram (outbound). Empty = adapter stays "none".
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
-      # real LLM RCA via our model plane: self-heal → Bifrost /anthropic → OpenRouter.
-      # x-api-key value is ignored by Bifrost (routes by the openrouter/ model prefix);
-      # non-empty just flips the vendored fake→real toggle.
-      ANTHROPIC_API_KEY: bifrost-local
-      ANTHROPIC_BASE_URL: http://bifrost:8080/anthropic
-      ANTHROPIC_MODEL: openrouter/anthropic/claude-opus-4.8
-      # real git-blame RCA over the platform's own repo (read-only mount above)
-      RCA_GIT_REPO: /repo
-      PORT: "3000"
-    ports: ["127.0.0.1:${SELFHEAL_PORT:-3100}:3000"]
-    healthcheck:
-      test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:3000/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -380,9 +317,6 @@ services:
       GATEWAY_KEY: ${MIND_GATEWAY_KEY:-}
       GATEWAY_MODEL: openrouter/openai/gpt-4o-mini
       FLEET_CRON: ${FLEET_CRON:-*/10 * * * *}
-      # real fleet failures (turn.failed / run.timeout / run.error) → self-heal incidents
-      SELFHEAL_URL: http://selfheal:3000
-      SIGNAL_SECRET: ${SIGNAL_SECRET:-}
     command: ["bun", "run", "server.ts"]
     ports: ["127.0.0.1:${OPS_PORT:-4700}:4700"]
     healthcheck:
@@ -406,35 +340,8 @@ services:
       INTERVAL: "180"
     command: ["bun", "run", "/loop.ts"]
 
-  # ── incident-forwarder: real platform self-monitoring — turns AgenticGateway
-  #    failure outcomes (evidence.jsonl) into signed AgenticSelfHealingCode signals. ──
-  incident-forwarder:
-    profiles: ["pager"]
-    image: oven/bun:1.3.11
-    restart: unless-stopped
-    depends_on:
-      selfheal: { condition: service_started }
-      gateway: { condition: service_started }
-    volumes:
-      - ../services/incident-forwarder/loop.ts:/loop.ts:ro
-      - gateway-data:/gateway-data:ro
-      - forwarder-state:/state
-    environment:
-      LEDGER_FILE: /gateway-data/evidence.jsonl
-      STATE_FILE: /state/forwarder.offset
-      SELFHEAL_URL: http://selfheal:3000
-      SIGNAL_SECRET: "${SIGNAL_SECRET:?set SIGNAL_SECRET — run agentic up}"
-      INTERVAL: "30"
-      # instance-specific watchdog targets (name=url, comma-separated). Default =
-      # the full platform set; product engines without the fleet profile override
-      # this to drop ops-runner (else the watchdog would page a non-deployed service).
-      WATCHDOG_SERVICES: ${WATCHDOG_SERVICES:-}
-    command: ["bun", "run", "/loop.ts"]
-
 volumes:
   mind-pgdata:
-  forwarder-state:
   apl-pgdata:
   gateway-data:
-  sho-pgdata:
   ollama-models:

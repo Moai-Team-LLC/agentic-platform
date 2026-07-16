@@ -1,7 +1,7 @@
 # Console API — embed engine data in your product
 
 The console is a read-only **BFF** (backend-for-frontend): a JSON API over the running
-engine — health, cost, memory, traces, incidents, fleet — plus a default dashboard page.
+engine — health, cost, memory, traces, fleet — plus a default dashboard page.
 Every engine instance serves one. To surface engine data inside your own product (e.g. an
 admin panel), **consume this API from your backend** — don't iframe the page.
 
@@ -42,9 +42,6 @@ product engine (e.g. `4914` for `init … 4910`). All ports come from the engine
                 "items": [ { "rule": str, "level": str, "message": str } ] },
   "memory":   { "beliefs": int, "materials": int,
                 "recent": [ { "subject": str, "predicate": str, "object": str } ] },
-  "selfheal": { "mode": str, "killed": bool,
-                "stats": { "total": int, "delivered": int, "escalated": int, "suspicious": int, "acked": int },
-                "incidents": [ … ] },
   "fleet":    { "agents": [ { "agent": str, "status": str, "lastSeen": int, "stale": bool } ],
                 "backlog": { "pending": int, "leased": int, "failed": int },
                 "recent":  [ { "agent": str, "kind": str, "action": str } ] },
@@ -61,7 +58,6 @@ product engine (e.g. `4914` for `init … 4910`). All ports come from the engine
 | `GET /api/cost`     | `{ total, calls, byRoute:[{route,n,cost}], byTenant:[{tenant,n,cost}], recent:[{route,cost,outcome,tenant}] }` |
 | `GET /api/memory`   | `{ beliefs, materials, recent:[{subject,predicate,object}] }` |
 | `GET /api/traces`   | `{ rows:[{agent,operation,name,tokens,start_ts}], agents:[{agent,n}] }` |
-| `GET /api/selfheal` | `{ mode, killed, stats:{total,delivered,escalated,suspicious,acked}, incidents:[…] }` |
 | `GET /api/fleet`    | `{ agents:[{agent,status,lastSeen,stale}], backlog:{pending,leased,failed}, recent:[{agent,kind,action}] }` |
 | `GET /api/findings` | `{ file, total, bySeverity:{critical,high,medium,low,info}, items:[{rule,level,message}] }` |
 
