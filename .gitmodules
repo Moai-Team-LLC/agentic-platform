@@ -10,9 +10,6 @@
 [submodule "vendor/AgenticPerformance"]
 	path = vendor/AgenticPerformance
 	url = https://github.com/Moai-Team-LLC/AgenticPerformance.git
-[submodule "vendor/AgenticSelfHealingCode"]
-	path = vendor/AgenticSelfHealingCode
-	url = https://github.com/Moai-Team-LLC/AgenticSelfHealingCode.git
 [submodule "vendor/AgenticAssurance"]
 	path = vendor/AgenticAssurance
 	url = https://github.com/Moai-Team-LLC/AgenticAssurance.git

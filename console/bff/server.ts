@@ -18,7 +18,6 @@ const MIND_URL = process.env.MIND_URL ?? "http://localhost:3000"
 const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8787"
 const BIFROST_URL = process.env.BIFROST_URL ?? "http://localhost:8080"
 const APL_URL = process.env.APL_URL ?? "http://localhost:4319"
-const SELFHEAL_URL = process.env.SELFHEAL_URL ?? "http://localhost:3100"
 const OPS_URL = process.env.OPS_URL ?? "http://localhost:4700"
 const MIND_TOKEN = process.env.MIND_TOKEN ?? "" // heartbeat MCP token, for the interactive "ask" box
 const MIND_PG_HOST = process.env.MIND_PG_HOST ?? "localhost"
@@ -42,20 +41,19 @@ const up = async (url: string): Promise<boolean> => {
   }
 }
 
-// which compose profiles this instance runs (fleet/pager/scan). Services outside the
+// which compose profiles this instance runs (fleet/scan). Services outside the
 // active set are NOT deployed by design (e.g. a product engine skips the dogfood
 // fleet) — they must read as "off", not "down", and not count against the verdict.
-const PROFILES = (process.env.COMPOSE_PROFILES ?? "fleet,pager,scan").split(",").map((s) => s.trim()).filter(Boolean)
+const PROFILES = (process.env.COMPOSE_PROFILES ?? "fleet,scan").split(",").map((s) => s.trim()).filter(Boolean)
 const profileOn = (p: string) => PROFILES.includes(p)
 
 const health = async () => {
   const probe = (cond: boolean, url: string) => (cond ? up(url) : Promise.resolve(false))
-  const [gateway, bifrost, mind, apl, sho, ops] = await Promise.all([
+  const [gateway, bifrost, mind, apl, ops] = await Promise.all([
     up(`${GATEWAY_URL}/health`),
     up(`${BIFROST_URL}/health`),
     up(`${MIND_URL}/health`),
     up(`${APL_URL}/health`),
-    probe(profileOn("pager"), `${SELFHEAL_URL}/status`),
     probe(profileOn("fleet"), `${OPS_URL}/health`),
   ])
   // assurance is "up" only if the refresher actually produced a RECENT scan — a
@@ -66,7 +64,7 @@ const health = async () => {
   // a node whose profile is not active for this instance: present but not deployed
   const off = (role: string, profile: string) => ({ role, up: false, active: false, kind: "off", profile })
   return {
-    // the full family — the run→remember→measure→heal→assure loop, governed by
+    // the full family — the run→remember→measure→assure loop, governed by
     // the Standard (the contract). Profile-gated nodes read "off" when not deployed.
     standard: { role: "the contract", up: true, kind: "contract" },
     ops: profileOn("fleet") ? { role: "runtime & fleet", up: ops } : off("runtime & fleet", "fleet"),
@@ -74,7 +72,6 @@ const health = async () => {
     bifrost: { role: "data plane", up: bifrost },
     mind: { role: "knowledge & memory", up: mind },
     performance: { role: "evals & observability", up: apl },
-    selfheal: profileOn("pager") ? { role: "incidents & pager", up: sho } : off("incidents & pager", "pager"),
     assurance: profileOn("scan") ? { role: "security & assurance", up: scanned, kind: "scan" } : off("security & assurance", "scan"),
     console: { role: "control plane", up: true },
   }
@@ -89,20 +86,6 @@ const lastRefresh = (): string | null => {
     return existsSync(f) ? readFileSync(f, "utf8").trim() : null
   } catch {
     return null
-  }
-}
-
-const selfheal = async () => {
-  try {
-    const [statusRes, incRes] = await Promise.all([
-      fetch(`${SELFHEAL_URL}/status`, { signal: AbortSignal.timeout(2500) }),
-      fetch(`${SELFHEAL_URL}/incidents?limit=6`, { signal: AbortSignal.timeout(2500) }),
-    ])
-    const status = statusRes.ok ? await statusRes.json() : {}
-    const inc = incRes.ok ? await incRes.json() : { incidents: [] }
-    return { mode: status.mode ?? "unknown", killed: status.killed ?? false, stats: status.incidents ?? {}, incidents: inc.incidents ?? [] }
-  } catch {
-    return { mode: "down", killed: false, stats: {}, incidents: [], error: "AgenticSelfHealingCode unreachable" }
   }
 }
 
@@ -270,12 +253,10 @@ Bun.serve({
         return json(findings())
       case "/api/memory":
         return json(await memory())
-      case "/api/selfheal":
-        return json(await selfheal())
       case "/api/fleet":
         return json(await fleet())
       case "/api/overview": {
-        const [h, t, m, s, fl] = await Promise.all([health(), traces(), memory(), selfheal(), fleet()])
+        const [h, t, m, fl] = await Promise.all([health(), traces(), memory(), fleet()])
         return json({
           health: h,
           spans: t.rows.length,
@@ -283,7 +264,6 @@ Bun.serve({
           cost: cost(),
           findings: findings(),
           memory: m,
-          selfheal: s,
           fleet: fl,
           lastRefresh: lastRefresh(),
           lastCallAgeSec: lastCallAgeSec(),

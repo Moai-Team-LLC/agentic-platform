@@ -41,7 +41,6 @@ Three zero-build options (no Electron, no Tauri):
 | 8787 | gateway | AgenticGateway — OpenAI-compatible edge |
 | 4380 | bifrost | data plane |
 | 4319 | apl-ingest | AgenticPerformance — OTLP trace ingest |
-| 3100 | selfheal | AgenticSelfHealingCode |
 | 4700 | ops-runner | AgenticOps fleet |
 | 5435 | mind-db | Postgres — **memory (crown jewel)** |
 | 5439 | apl-db | Postgres — traces |
@@ -66,7 +65,6 @@ Your data lives in Docker **named volumes**:
 
 - `agentic-platform_mind-pgdata` — AgenticMind knowledge & memory (**irreplaceable**)
 - `agentic-platform_apl-pgdata` — Performance traces
-- `agentic-platform_sho-pgdata` — Self-healing incidents
 - `agentic-platform_gateway-data` — the gateway tenant key + cost ledger
 
 `agentic down` stops containers but **preserves** these — safe to run daily.

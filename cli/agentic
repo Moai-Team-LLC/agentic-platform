@@ -22,12 +22,12 @@ load_env() {
   [ -f "$ENVF" ] || { say "creating .env from template"; sed "s#\${HOME}#$HOME#g" "$ROOT/integration/platform.env.example" > "$ENVF"; }
   set -a; . "$ENVF"; set +a
   : "${MIND_PORT:=4390}" "${APL_INGEST_PORT:=4319}" "${GATEWAY_PORT:=8787}" "${BIFROST_PORT:=4380}" "${CONSOLE_PORT:=4600}"
-  : "${MIND_PG_PORT:=5435}" "${APL_PG_PORT:=5439}" "${SELFHEAL_PORT:=3100}" "${OPS_PORT:=4700}"
+  : "${MIND_PG_PORT:=5435}" "${APL_PG_PORT:=5439}" "${OPS_PORT:=4700}"
   : "${EMBED_CACHE_DIR:=$HOME/.cache/agenticmind-embed}"
   # instance identity + service profiles (an engine per product = its own name,
   # ports and profile set; the platform's own instance is the default)
   export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-agentic-platform}"
-  export COMPOSE_PROFILES="${COMPOSE_PROFILES:-fleet,pager,scan}"
+  export COMPOSE_PROFILES="${COMPOSE_PROFILES:-fleet,scan}"
   [ -n "${OPENROUTER_API_KEY:-}" ] || { warn "OPENROUTER_API_KEY is empty in $ENVF"; return 1; }
 }
 setenv() { local v="$1" val="$2"; grep -q "^$v=" "$ENVF" && perl -i -pe "s#^$v=.*#$v=$val#" "$ENVF" || printf '%s=%s\n' "$v" "$val" >> "$ENVF"; }
@@ -68,7 +68,7 @@ gw_key_ok() {
 
 cmd_up() {
   load_env || return 1
-  gen_secret AUTH_SECRET; gen_secret AGW_VAULT_KEY; gen_secret SIGNAL_SECRET
+  gen_secret AUTH_SECRET; gen_secret AGW_VAULT_KEY
   mkdir -p "$EMBED_CACHE_DIR" "$ROOT/.run"
   local fails=0
 
@@ -76,7 +76,7 @@ cmd_up() {
   # DBs, snapshot them, THEN proceed (mind-migrate runs during the full up below).
   if docker volume inspect agentic-platform_mind-pgdata >/dev/null 2>&1; then
     say "Snapshotting data before migrations"
-    dc up -d mind-db apl-db sho-db >/dev/null 2>&1
+    dc up -d mind-db apl-db >/dev/null 2>&1
     local i=0; until dc exec -T mind-db pg_isready -U postgres >/dev/null 2>&1 || [ $i -ge 30 ]; do sleep 1; i=$((i+1)); done
     cmd_backup quiet && ok "snapshot saved → $BACKUP_DIR" || warn "pre-migration snapshot skipped"
   fi
@@ -259,7 +259,6 @@ cmd_backup() {
   [ "$quiet" = quiet ] || say "Backing up databases → $dir"
   dc exec -T mind-db pg_dump -U postgres --clean --if-exists postgres 2>/dev/null | gzip > "$dir/mind.sql.gz"
   dc exec -T apl-db  pg_dump -U postgres --clean --if-exists postgres 2>/dev/null | gzip > "$dir/apl.sql.gz"
-  dc exec -T sho-db  pg_dump -U postgres --clean --if-exists sho      2>/dev/null | gzip > "$dir/sho.sql.gz"
   dc cp gateway:/data/agw.db "$dir/agw.db" >/dev/null 2>&1 || true
   dc cp gateway:/data/evidence.jsonl "$dir/evidence.jsonl" >/dev/null 2>&1 || true
   ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +15 | xargs -I{} rm -rf {} 2>/dev/null || true   # keep last 14
@@ -267,7 +266,7 @@ cmd_backup() {
     [ "$quiet" = quiet ] || warn "mind dump looks empty — is the platform up?"
     return 1
   fi
-  [ "$quiet" = quiet ] || ok "backed up (mind $(du -h "$dir/mind.sql.gz" | cut -f1) + apl + sho + gateway) → $dir"
+  [ "$quiet" = quiet ] || ok "backed up (mind $(du -h "$dir/mind.sql.gz" | cut -f1) + apl + gateway) → $dir"
 }
 
 # restore the databases from a backup directory (overwrites current data)
@@ -278,19 +277,18 @@ cmd_restore() {
   say "Restoring databases from $dir  (current data will be overwritten)"
   [ -f "$dir/mind.sql.gz" ] && gzip -dc "$dir/mind.sql.gz" | dc exec -T mind-db psql -q -U postgres postgres >/dev/null 2>&1 && ok "mind restored"
   [ -f "$dir/apl.sql.gz" ]  && gzip -dc "$dir/apl.sql.gz"  | dc exec -T apl-db  psql -q -U postgres postgres >/dev/null 2>&1 && ok "apl restored"
-  [ -f "$dir/sho.sql.gz" ]  && gzip -dc "$dir/sho.sql.gz"  | dc exec -T sho-db  psql -q -U postgres sho      >/dev/null 2>&1 && ok "sho restored"
   ok "restore complete"
 }
 
 # stamp a NEW engine instance for a product/client: its own name, ports, secrets
 # and service profiles. Run in a fresh clone: agentic init <name> [port-base] [profiles]
 #   name       [a-z0-9-]: names containers/volumes/network (isolation per instance)
-#   port-base  optional; assigns 9 sequential host ports from base (two engines on
+#   port-base  optional; assigns sequential host ports from base (two engines on
 #              one machine can't share ports). Omit on a dedicated server.
-#   profiles   optional, default "pager,scan" (core always runs; "fleet" is the
+#   profiles   optional, default "scan" (core always runs; "fleet" is the
 #              platform's own dogfood agents — product engines usually skip it)
 cmd_init() {
-  local name="${1:-}" base="${2:-}" profiles="${3:-pager,scan}"
+  local name="${1:-}" base="${2:-}" profiles="${3:-scan}"
   [ -n "$name" ] || { warn "usage: agentic init <name> [port-base] [profiles]"; return 1; }
   printf '%s' "$name" | grep -qE '^[a-z0-9][a-z0-9-]*$' || { warn "name must be [a-z0-9-]"; return 1; }
   if [ -f "$ENVF" ] && grep -q '^COMPOSE_PROJECT_NAME=' "$ENVF"; then
@@ -301,16 +299,12 @@ cmd_init() {
   setenv COMPOSE_PROFILES "$profiles"
   if [ -n "$base" ]; then
     setenv MIND_PORT "$((base+0))";  setenv GATEWAY_PORT "$((base+1))"; setenv BIFROST_PORT "$((base+2))"
-    setenv APL_INGEST_PORT "$((base+3))"; setenv CONSOLE_PORT "$((base+4))"; setenv SELFHEAL_PORT "$((base+5))"
+    setenv APL_INGEST_PORT "$((base+3))"; setenv CONSOLE_PORT "$((base+4))"
     setenv OPS_PORT "$((base+6))"; setenv MIND_PG_PORT "$((base+7))"; setenv APL_PG_PORT "$((base+8))"
   fi
-  # without the fleet profile, the watchdog must not page the absent ops-runner
-  case ",$profiles," in *",fleet,"*) : ;; *)
-    setenv WATCHDOG_SERVICES "gateway=http://gateway:8787/health,bifrost=http://bifrost:8080/health,mind=http://mind-server:3000/health,performance=http://apl-ingest:4319/health,console=http://console:4600/api/health" ;;
-  esac
-  gen_secret AUTH_SECRET; gen_secret AGW_VAULT_KEY; gen_secret SIGNAL_SECRET
+  gen_secret AUTH_SECRET; gen_secret AGW_VAULT_KEY
   ok "instance '$name-engine' initialized (profiles: core+$profiles$( [ -n "$base" ] && echo ", ports $base-$((base+8))" ))"
-  echo "     next: 1) put OPENROUTER_API_KEY=…  (+ optional TELEGRAM_BOT_TOKEN/CHAT_ID) into .env"
+  echo "     next: 1) put OPENROUTER_API_KEY=… into .env"
   echo "           2) agentic up        3) agentic doctor        4) agentic handout"
 }
 
@@ -322,13 +316,6 @@ cmd_handout() {
   say "Minting a dedicated MCP token for the integration"
   local tok; tok="$(cmd_token "$COMPOSE_PROJECT_NAME-integration" 2>/dev/null | grep -oE 'ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' | tail -1)"
   [ -n "$tok" ] || { warn "token mint failed — is the engine up?"; return 1; }
-  local pager_section
-  case ",${COMPOSE_PROFILES}," in
-    *",pager,"*) pager_section="- Signed webhooks: POST http://127.0.0.1:${SELFHEAL_PORT}/webhook/{sentry,otel,rum,business-metric}
-  (header x-signature = HMAC-SHA256(body, SIGNAL_SECRET))
-- Telegram pager: set TELEGRAM_BOT_TOKEN/CHAT_ID in .env" ;;
-    *) pager_section="- (pager profile not enabled for this instance)" ;;
-  esac
   cat > "$f" <<EOF
 # ${COMPOSE_PROJECT_NAME} — integration handout
 _Generated by \`agentic handout\`. Contains credentials — do not commit._
@@ -352,9 +339,6 @@ http://127.0.0.1:${CONSOLE_PORT}
 ## Traces (AgenticPerformance, OTLP)
 - OTLP endpoint: \`http://127.0.0.1:${APL_INGEST_PORT}\` (set OTEL_EXPORTER_OTLP_ENDPOINT)
 - Attribute your agents with \`gen_ai.agent.id\`
-
-## Incidents (pager)
-${pager_section}
 
 ## Operations
 - Health: \`agentic status\` · end-to-end: \`agentic doctor\`

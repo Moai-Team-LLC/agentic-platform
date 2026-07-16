@@ -4,7 +4,7 @@
 
 ### The whole AgenticProduct ecosystem, wired into one runnable product.
 
-*One config · one command · one console.* Run → remember → measure → heal → assure.
+*One config · one command · one console.* Run → remember → measure → assure.
 
 </div>
 
@@ -86,11 +86,6 @@ agentic-platform/
 📈 [AgenticPerformance](https://github.com/Moai-Team-LLC/AgenticPerformance) ·
 🛡️ [AgenticAssurance](https://github.com/Moai-Team-LLC/AgenticAssurance) ·
 🚪 [AgenticGateway](https://github.com/Moai-Team-LLC/AgenticGateway)
-
-Plus one piece of **internal infrastructure** (not part of the product line):
-[AgenticSelfHealingCode](https://github.com/Moai-Team-LLC/AgenticSelfHealingCode), vendored as
-the platform's incident engine — it takes signed failure signals (agent failures, routing
-failures, service-down watchdog), runs live LLM + git-blame RCA, and pages Telegram.
 
 ## Requirements
 
