@@ -284,11 +284,19 @@ services:
     entrypoint: ["sh", "-c"]
     command:
       - |
-        echo "[refresher] every ${REFRESH_INTERVAL:-120}s: scan the family";
+        echo "[refresher] scan every ${REFRESH_INTERVAL:-120}s; liveness heartbeat every 20s";
+        last=0;
         while true; do
-          bun run cli -- scan /manifests/agenticmind.json --sarif /run-data/agenticmind.sarif --report /run-data/agenticmind.md >/dev/null 2>&1 || true;
+          now=$$(date +%s);
+          if [ $$((now - last)) -ge ${REFRESH_INTERVAL:-120} ]; then
+            bun run cli -- scan /manifests/agenticmind.json --sarif /run-data/agenticmind.sarif --report /run-data/agenticmind.md >/dev/null 2>&1 || true;
+            last=$$now;
+          fi;
+          # heartbeat decoupled from the scan ($$ = literal $ for the container, not
+          # compose interpolation): on wake/pause the freshness gate recovers within
+          # 20s, but a truly-dead refresher still goes stale (>600s).
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /run-data/last-refresh.txt;
-          sleep ${REFRESH_INTERVAL:-120};
+          sleep 20;
         done
     volumes:
       - ../examples/manifests:/manifests:ro
