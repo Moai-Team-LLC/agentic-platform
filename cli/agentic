@@ -565,6 +565,86 @@ print("  "+col("%d repos"%len(rows),"1;36")+" · %s dirty · %s unpushed · %d s
 ' "$mode"
 }
 
+# ── prod-health ───────────────────────────────────────────────────────────────
+# Uptime pane over the registry: HTTP-pings every prod_url, and with --disk also
+# ssh's each droplet for root-fs usage. HOST-NATIVE, read-only (GET + `df`), all
+# with hard timeouts; probes run sequentially (never fan out hundreds of sockets).
+cmd_prod_health() {
+  local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
+  [ -f "$reg" ] || { bad "no repo registry at $(c '1;37' "$reg")"; return 1; }
+  local do_disk=0; [ "${1:-}" = "--disk" ] && do_disk=1
+
+  local rows
+  rows="$(PYTHONIOENCODING=utf-8 python3 -c 'import json,sys,re
+for r in json.load(open(sys.argv[1],encoding="utf-8")):
+    u=(r.get("prod_url") or "").strip(); ip=(r.get("droplet_ip") or "").strip()
+    if u: u=re.split(r"[\s(]", u)[0]   # first clean host — registry urls carry notes / extra domains
+    if u or ip: print("\t".join([r.get("name",""),u,ip,(r.get("ssh_key") or "").strip()]))' "$reg")" \
+    || { bad "registry is not valid JSON: $reg"; return 1; }
+
+  say "probing $(printf '%s\n' "$rows" | grep -c .) prod targets$([ "$do_disk" = 1 ] && echo ' (+disk via ssh)')…"
+  {
+    while IFS=$'\t' read -r n url ip key; do
+      [ -n "$n" ] || continue
+      local code='-' disk='-' full kp
+      if [ -n "$url" ]; then
+        case "$url" in http*) full="$url";; *) full="https://$url";; esac
+        code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 -L "$full" 2>/dev/null)"
+        [ -z "$code" ] && code=000   # curl's -w already prints 000 on failure; don't double it
+      fi
+      if [ "$do_disk" = 1 ] && [ -n "$ip" ] && [ -n "$key" ]; then
+        kp="${key/#\~/$HOME}"
+        disk="$(ssh -n -i "$kp" -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new "root@$ip" \
+                 "df -P / | awk 'NR==2{print \$5}'" 2>/dev/null || echo '?')"
+        [ -z "$disk" ] && disk='?'
+      fi
+      printf '%s\t%s\t%s\t%s\n' "$n" "${url:--}" "$code" "$disk"
+    done <<< "$rows"
+  } | PYTHONIOENCODING=utf-8 python3 -c '
+import sys,re
+rows=[]
+for line in sys.stdin:
+    line=line.rstrip("\n")
+    if not line.strip(): continue
+    n,url,code,disk=line.split("\t"); rows.append(dict(name=n,url=url,code=code,disk=disk))
+def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
+def diskpct(d):
+    try: return int(d[:-1]) if d.endswith("%") else int(d)
+    except: return None
+def sev(r):
+    c=r["code"]
+    if c=="000" or (c and c[:1]=="5"): return 3
+    if c and c[:1]=="4": return 2
+    dp=diskpct(r["disk"])
+    if dp is not None and dp>=85: return 2
+    return 0
+rows.sort(key=sev,reverse=True)
+def codecol(c):
+    if c=="-": return col("—","2")
+    if c=="000": return col("DOWN","1;31")
+    if c[:1] in ("2","3"): return col(c,"1;32")
+    if c[:1]=="4": return col(c,"1;33")
+    if c[:1]=="5": return col(c,"1;31")
+    return c
+def diskcol(d):
+    dp=diskpct(d)
+    if dp is None: return col(d,"2")
+    return col(d,"1;31" if dp>=90 else "1;33" if dp>=85 else "1;32")
+w_n=max([len(r["name"]) for r in rows]+[4])+1
+w_u=max([len(r["url"]) for r in rows]+[8])+1
+print()
+print("  "+col("%-*s %-*s %-6s %s"%(w_n,"REPO",w_u,"PROD URL","HTTP","DISK"),"1;37"))
+for r in rows:
+    hv=re.sub(r"\033\[[0-9;]*m","",codecol(r["code"]))
+    print("  %-*s %-*s %s%s %s"%(w_n,r["name"],w_u,r["url"],codecol(r["code"])," "*max(1,6-len(hv)),diskcol(r["disk"])))
+down=sum(1 for r in rows if r["code"]=="000" or (r["code"] and r["code"][:1]=="5"))
+warn=sum(1 for r in rows if (r["code"] and r["code"][:1]=="4") or (diskpct(r["disk"]) or 0)>=85)
+print()
+print("  "+col("%d targets"%len(rows),"1;36")+" · %s down · %s warn"%(
+    col(down,"1;31") if down else "0", col(warn,"1;33") if warn else "0"))
+'
+}
+
 usage() {
   cat <<'USAGE'
 agentic — the Agentic Platform control plane
@@ -576,6 +656,7 @@ agentic — the Agentic Platform control plane
   agentic down             stop the stack (data volumes preserved)
   agentic status           aggregate health verdict + per-service states
   agentic code-status      portfolio git status across all your repos (host, registry-driven)
+  agentic prod-health [--disk]  ping every prod URL (+ ssh droplet disk) from the registry
   agentic doctor           end-to-end readiness (routing + Claude's MCP path)
   agentic ask "question"   ask AgenticMind a question from the terminal
   agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
@@ -599,6 +680,7 @@ case "${1:-}" in
   init) shift; cmd_init "$@" ;; handout) cmd_handout ;;
   up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; doctor) cmd_doctor ;;
   code-status|repos) shift 2>/dev/null || true; cmd_code_status "$@" ;;
+  prod-health|health) shift 2>/dev/null || true; cmd_prod_health "$@" ;;
   console) cmd_console ;; app) cmd_app ;; dockapp) cmd_dockapp ;; menubar) cmd_menubar ;;
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
