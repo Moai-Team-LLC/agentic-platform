@@ -25,18 +25,37 @@
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;
        -webkit-font-smoothing:antialiased}
   .num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
-  header{padding:20px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;
-         position:sticky;top:0;background:linear-gradient(180deg,#0b0f16,rgba(11,15,22,.85));backdrop-filter:blur(8px);z-index:5}
+  header{padding:18px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;
+         position:sticky;top:0;background:linear-gradient(180deg,#0b0f16,rgba(11,15,22,.9));backdrop-filter:blur(8px);z-index:6}
   header h1{font-size:15px;font-weight:600;letter-spacing:-.01em;margin:0}
   header .sub{color:var(--mut);font-size:12.5px}
   .brand{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--teal),var(--teal-d));
           display:grid;place-items:center;font-weight:700;color:#fff;font-size:13px;box-shadow:0 0 0 1px #ffffff12 inset}
   .spacer{flex:1}
   .pill{font-size:12px;color:var(--mut);border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-family:var(--mono)}
-  main{padding:24px 28px;max-width:1200px;margin:0 auto}
+
+  /* tabs */
+  nav.tabs{display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--line);position:sticky;top:57px;
+           background:rgba(10,13,19,.92);backdrop-filter:blur(8px);z-index:5;overflow-x:auto}
+  .tab{appearance:none;background:none;border:none;color:var(--mut);font-family:var(--sans);font-size:13.5px;font-weight:500;
+       padding:13px 15px;min-height:44px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;
+       display:inline-flex;align-items:center;gap:7px;transition:color .15s ease,border-color .15s ease}
+  .tab:hover{color:var(--ink)}
+  .tab:active{transform:translateY(1px)}
+  .tab.active{color:var(--ink);border-bottom-color:var(--teal)}
+  .tab:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:6px}
+  .tab .cnt{font-family:var(--mono);font-size:10.5px;color:var(--dim);background:#ffffff0d;border-radius:5px;padding:1px 6px;line-height:1.5}
+  .tab .cnt:empty{display:none}
+  .tab .cnt.alert{color:var(--down);background:#e0574b1f}
+
+  main{padding:22px 28px 40px;max-width:1200px;margin:0 auto}
+  .pane{display:none}
+  .pane.active{display:block;animation:fade .2s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.pane.active{animation:none}}
 
   /* loop strip */
-  .loop{display:flex;align-items:stretch;gap:0;margin:2px 0 26px;overflow-x:auto;padding-bottom:4px}
+  .loop{display:flex;align-items:stretch;gap:0;margin:2px 0 22px;overflow-x:auto;padding-bottom:4px}
   .node{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--line);padding:12px 14px;position:relative}
   .node:first-child{border-radius:10px 0 0 10px}
   .node:last-child{border-radius:0 10px 10px 0}
@@ -47,7 +66,7 @@
   .dot.up{background:var(--up);box-shadow:0 0 0 3px #3fb47f22}
   .dot.down{background:var(--down);box-shadow:0 0 0 3px #e0574b22}
   .dot.comp{background:var(--teal);box-shadow:0 0 0 3px #4991ad22}
-  .dot.off{background:var(--dim);box-shadow:none} /* not deployed in this profile */
+  .dot.off{background:var(--dim);box-shadow:none}
   .node.off .role,.node.off .name{opacity:.45}
   .live{display:inline-flex;align-items:center;gap:6px}
   .live .b{width:7px;height:7px;border-radius:50%;background:var(--up);box-shadow:0 0 0 3px #3fb47f22;animation:pulse 2s infinite}
@@ -58,6 +77,7 @@
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:820px){.grid{grid-template-columns:1fr}.node{min-width:150px}}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .card+.card{margin-top:16px}
   .card h2{font-size:12.5px;font-weight:600;margin:0;padding:13px 16px;border-bottom:1px solid var(--line);
            display:flex;align-items:center;gap:8px;color:var(--ink)}
   .card h2 .tag{font-size:11px;color:var(--dim);font-weight:500;margin-left:auto;font-family:var(--mono)}
@@ -84,12 +104,28 @@
              padding:8px 11px;font-family:var(--sans);font-size:13px;outline:none}
   .ask input:focus{border-color:var(--teal)}
   .ask button{background:var(--teal);color:#fff;border:none;border-radius:8px;padding:8px 15px;font-weight:600;
-              font-size:13px;cursor:pointer;transition:background .15s}
+              font-size:13px;cursor:pointer;transition:background .15s ease;min-height:38px}
   .ask button:hover{background:var(--teal-d)} .ask button:active{transform:translateY(1px)}
   .ask button:disabled{opacity:.5;cursor:default}
   .answer{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px;
           font-size:12.5px;line-height:1.55;white-space:pre-wrap;max-height:200px;overflow:auto}
-  .foot{margin:26px 2px 8px;color:var(--dim);font-size:11.5px;font-family:var(--mono)}
+
+  /* overview */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:12px;margin:2px 0 20px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .tile .v{font-size:26px;font-weight:650;font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1}
+  .tile .l{font-size:11.5px;color:var(--mut);margin-top:6px}
+  .tile .v.teal{color:var(--teal)}.tile .v.copper{color:var(--copper)}.tile .v.down{color:var(--down)}
+  .tile .v.warn{color:var(--warn)}.tile .v.up{color:var(--up)}
+  .attn{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .attn h2{font-size:12.5px;font-weight:600;margin:0;padding:13px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px}
+  .attn .body{padding:4px 8px}
+  .attn .row{display:flex;align-items:center;gap:11px;padding:8px;font-size:13px;border-bottom:1px solid #ffffff08}
+  .attn .row:last-child{border-bottom:none}
+  .attn .tg{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:5px;flex:none;min-width:34px;text-align:center}
+  .attn .tg.down{color:var(--down);background:#e0574b1a}.attn .tg.warn{color:var(--warn);background:#d9a4411a}
+  .attn .okrow{color:var(--up);padding:14px 8px;font-size:13px}
+  .foot{margin:24px 2px 8px;color:var(--dim);font-size:11.5px;font-family:var(--mono)}
   .foot .stale{color:var(--warn)}
 </style>
 </head>
@@ -103,33 +139,86 @@
   <div class="spacer"></div>
   <div class="pill" id="statusPill">connecting…</div>
 </header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-pane="overview">Overview</button>
+  <button class="tab" data-pane="portfolio">🗂️ Portfolio <span class="cnt" id="badgePortfolio"></span></button>
+  <button class="tab" data-pane="activity">Activity</button>
+  <button class="tab" data-pane="security">Security <span class="cnt" id="badgeSecurity"></span></button>
+  <button class="tab" data-pane="knowledge">Knowledge</button>
+</nav>
+
 <main>
-  <div class="loop" id="loop"></div>
-  <div class="grid">
+  <!-- OVERVIEW -->
+  <div class="pane active" id="pane-overview">
+    <div class="loop" id="loop"></div>
+    <div class="tiles">
+      <div class="tile"><div class="v up" id="ovServices">—</div><div class="l">services up</div></div>
+      <div class="tile"><div class="v teal" id="ovRepos">—</div><div class="l">repos</div></div>
+      <div class="tile"><div class="v down" id="ovUnpushed">—</div><div class="l">unpushed</div></div>
+      <div class="tile"><div class="v down" id="ovDown">—</div><div class="l">prod down</div></div>
+      <div class="tile"><div class="v copper" id="ovCost">—</div><div class="l">cost (USD)</div></div>
+      <div class="tile"><div class="v teal" id="ovBeliefs">—</div><div class="l">beliefs</div></div>
+    </div>
+    <div class="attn">
+      <h2>⚡ Needs attention</h2>
+      <div class="body" id="ovAttention"><div class="okrow">checking…</div></div>
+    </div>
+  </div>
+
+  <!-- PORTFOLIO -->
+  <div class="pane" id="pane-portfolio">
     <section class="card">
-      <h2>📈 Observability <span class="tag" id="tracesTag">AgenticPerformance</span></h2>
+      <h2>🗂️ Portfolio <span class="tag" id="portTag">host · git + prod</span></h2>
       <div class="body">
         <div class="kpis">
-          <div class="kpi"><div class="v teal" id="spanCount">—</div><div class="l">spans</div></div>
-          <div class="kpi"><div class="v" id="agentCount">—</div><div class="l">agents traced</div></div>
+          <div class="kpi"><div class="v teal" id="portRepos">—</div><div class="l">repos</div></div>
+          <div class="kpi"><div class="v" id="portDirty" style="color:var(--warn)">—</div><div class="l">dirty</div></div>
+          <div class="kpi"><div class="v" id="portUnpushed" style="color:var(--down)">—</div><div class="l">unpushed</div></div>
+          <div class="kpi"><div class="v" id="portDown" style="color:var(--down)">—</div><div class="l">prod down</div></div>
         </div>
-        <table><thead><tr><th>agent</th><th>op</th><th>span</th><th class="r">tok</th></tr></thead>
-        <tbody id="traceRows"><tr><td colspan="4" class="empty">no traces yet</td></tr></tbody></table>
+        <div style="max-height:360px;overflow:auto;margin-top:6px">
+          <table><thead><tr><th>repo</th><th>branch</th><th>flags</th><th class="r">last</th></tr></thead>
+          <tbody id="portRepoRows"><tr><td colspan="4" class="empty">no snapshot yet — run <span class="badge">agentic snapshot</span></td></tr></tbody></table>
+        </div>
+        <div style="max-height:240px;overflow:auto;margin-top:12px">
+          <table><thead><tr><th>prod url</th><th class="r">http</th><th class="r">disk</th></tr></thead>
+          <tbody id="portProdRows"></tbody></table>
+        </div>
       </div>
     </section>
+  </div>
 
-    <section class="card">
-      <h2>🚪 Model plane · cost <span class="tag" id="costTag">AgenticGateway</span></h2>
-      <div class="body">
-        <div class="kpis">
-          <div class="kpi"><div class="v copper" id="costTotal">—</div><div class="l">total cost (USD)</div></div>
-          <div class="kpi"><div class="v" id="costCalls">—</div><div class="l">routed calls</div></div>
+  <!-- ACTIVITY: observability + cost -->
+  <div class="pane" id="pane-activity">
+    <div class="grid">
+      <section class="card">
+        <h2>📈 Observability <span class="tag" id="tracesTag">AgenticPerformance</span></h2>
+        <div class="body">
+          <div class="kpis">
+            <div class="kpi"><div class="v teal" id="spanCount">—</div><div class="l">spans</div></div>
+            <div class="kpi"><div class="v" id="agentCount">—</div><div class="l">agents traced</div></div>
+          </div>
+          <table><thead><tr><th>agent</th><th>op</th><th>span</th><th class="r">tok</th></tr></thead>
+          <tbody id="traceRows"><tr><td colspan="4" class="empty">no traces yet</td></tr></tbody></table>
         </div>
-        <table><thead><tr><th>route</th><th class="r">calls</th><th class="r">cost</th></tr></thead>
-        <tbody id="costRows"><tr><td colspan="3" class="empty">no calls yet</td></tr></tbody></table>
-      </div>
-    </section>
+      </section>
+      <section class="card">
+        <h2>🚪 Model plane · cost <span class="tag" id="costTag">AgenticGateway</span></h2>
+        <div class="body">
+          <div class="kpis">
+            <div class="kpi"><div class="v copper" id="costTotal">—</div><div class="l">total cost (USD)</div></div>
+            <div class="kpi"><div class="v" id="costCalls">—</div><div class="l">routed calls</div></div>
+          </div>
+          <table><thead><tr><th>route</th><th class="r">calls</th><th class="r">cost</th></tr></thead>
+          <tbody id="costRows"><tr><td colspan="3" class="empty">no calls yet</td></tr></tbody></table>
+        </div>
+      </section>
+    </div>
+  </div>
 
+  <!-- SECURITY -->
+  <div class="pane" id="pane-security">
     <section class="card">
       <h2>🛡️ Security <span class="tag" id="secTag">AgenticAssurance</span></h2>
       <div class="body">
@@ -138,55 +227,39 @@
         <table><tbody id="secRows"></tbody></table>
       </div>
     </section>
-
-    <section class="card">
-      <h2>🧠 Knowledge &amp; memory <span class="tag" id="memTag">AgenticMind</span></h2>
-      <div class="body">
-        <div class="kpis">
-          <div class="kpi"><div class="v teal" id="beliefs">—</div><div class="l">beliefs</div></div>
-          <div class="kpi"><div class="v" id="materials">—</div><div class="l">materials</div></div>
-        </div>
-        <div class="ask">
-          <input id="askInput" type="text" placeholder="Ask AgenticMind a question…" autocomplete="off" />
-          <button id="askBtn">Ask</button>
-        </div>
-        <div id="askAnswer" class="answer" hidden></div>
-        <table><tbody id="memRows"><tr><td class="empty">memory empty</td></tr></tbody></table>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>⚙️ Fleet &amp; runtime <span class="tag">AgenticOps</span></h2>
-      <div class="body">
-        <div class="kpis">
-          <div class="kpi"><div class="v teal" id="fleetAgents">—</div><div class="l">agents</div></div>
-          <div class="kpi"><div class="v" id="fleetBacklog">—</div><div class="l">backlog tasks</div></div>
-        </div>
-        <table><thead><tr><th>agent</th><th class="r">health</th></tr></thead><tbody id="fleetRows"></tbody></table>
-        <div id="govRows" class="muted" style="margin-top:10px;font-size:12px"></div>
-      </div>
-    </section>
   </div>
 
-  <section class="card" style="margin-top:16px">
-    <h2>🗂️ Portfolio <span class="tag" id="portTag">host · git + prod</span></h2>
-    <div class="body">
-      <div class="kpis">
-        <div class="kpi"><div class="v teal" id="portRepos">—</div><div class="l">repos</div></div>
-        <div class="kpi"><div class="v" id="portDirty" style="color:var(--warn)">—</div><div class="l">dirty</div></div>
-        <div class="kpi"><div class="v" id="portUnpushed" style="color:var(--down)">—</div><div class="l">unpushed</div></div>
-        <div class="kpi"><div class="v" id="portDown" style="color:var(--down)">—</div><div class="l">prod down</div></div>
-      </div>
-      <div style="max-height:300px;overflow:auto;margin-top:6px">
-        <table><thead><tr><th>repo</th><th>branch</th><th>flags</th><th class="r">last</th></tr></thead>
-        <tbody id="portRepoRows"><tr><td colspan="4" class="empty">no snapshot yet — run <span class="badge">agentic snapshot</span></td></tr></tbody></table>
-      </div>
-      <div style="max-height:200px;overflow:auto;margin-top:12px">
-        <table><thead><tr><th>prod url</th><th class="r">http</th><th class="r">disk</th></tr></thead>
-        <tbody id="portProdRows"></tbody></table>
-      </div>
+  <!-- KNOWLEDGE: mind + fleet -->
+  <div class="pane" id="pane-knowledge">
+    <div class="grid">
+      <section class="card">
+        <h2>🧠 Knowledge &amp; memory <span class="tag" id="memTag">AgenticMind</span></h2>
+        <div class="body">
+          <div class="kpis">
+            <div class="kpi"><div class="v teal" id="beliefs">—</div><div class="l">beliefs</div></div>
+            <div class="kpi"><div class="v" id="materials">—</div><div class="l">materials</div></div>
+          </div>
+          <div class="ask">
+            <input id="askInput" type="text" placeholder="Ask AgenticMind a question…" autocomplete="off" />
+            <button id="askBtn">Ask</button>
+          </div>
+          <div id="askAnswer" class="answer" hidden></div>
+          <table><tbody id="memRows"><tr><td class="empty">memory empty</td></tr></tbody></table>
+        </div>
+      </section>
+      <section class="card">
+        <h2>⚙️ Fleet &amp; runtime <span class="tag">AgenticOps</span></h2>
+        <div class="body">
+          <div class="kpis">
+            <div class="kpi"><div class="v teal" id="fleetAgents">—</div><div class="l">agents</div></div>
+            <div class="kpi"><div class="v" id="fleetBacklog">—</div><div class="l">backlog tasks</div></div>
+          </div>
+          <table><thead><tr><th>agent</th><th class="r">health</th></tr></thead><tbody id="fleetRows"></tbody></table>
+          <div id="govRows" class="muted" style="margin-top:10px;font-size:12px"></div>
+        </div>
+      </section>
     </div>
-  </section>
+  </div>
 
   <div class="foot" id="foot"><span class="live"><span class="b"></span> live</span> · run → remember → measure → assure</div>
 </main>
@@ -195,6 +268,14 @@ const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]))
 const usd = (n) => "$" + (Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:4,maximumFractionDigits:6})
 const timeAgo = (iso) => { try{ const s=Math.round((Date.now()-new Date(iso).getTime())/1000); return s<90?`${s}s ago`:s<5400?`${Math.round(s/60)}m ago`:`${Math.round(s/3600)}h ago` }catch{ return "" } }
+
+// tabs — remember the last one
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===t))
+  document.querySelectorAll(".pane").forEach(x=>x.classList.toggle("active",x.id==="pane-"+t.dataset.pane))
+  try{ localStorage.setItem("agtab",t.dataset.pane) }catch{}
+}))
+try{ const s=localStorage.getItem("agtab"); const t=s&&document.querySelector(`.tab[data-pane="${s}"]`); if(t) t.click() }catch{}
 
 const LOOP = [
   ["standard","Standard","contract"],
@@ -207,7 +288,7 @@ const LOOP = [
 ]
 function dotClass(e){
   if(!e) return "down"
-  if(e.active===false) return "off"                 // profile not deployed on this instance
+  if(e.active===false) return "off"
   if(e.kind==="contract"||e.kind==="library") return "comp"
   return e.up ? "up" : "down"
 }
@@ -219,12 +300,12 @@ function renderLoop(h){
     return `<div class="node${cls==='off'?' off':''}"><div class="role">${role}</div><div class="name">${dot}${name}</div></div>${arr}`
   }).join("")
 }
+const isDown = (c) => c==="000" || String(c||"")[0]==="5"
+
 async function tick(){
   let d
   try{ d = await (await fetch("/api/overview")).json() }catch{ $("statusPill").textContent="console offline"; return }
   const h = d.health||{}
-  // honest count: only real services — contract/library nodes (the Standard) are
-  // docs, can never be down, and would only inflate the verdict
   const real = Object.values(h).filter(x=>x && x.kind!=="contract" && x.kind!=="library" && x.active!==false)
   const upN = real.filter(x=>x.up).length, tot = real.length
   $("statusPill").textContent = `${upN}/${tot} services up`
@@ -234,8 +315,6 @@ async function tick(){
   // traces
   $("spanCount").textContent = d.spans ?? 0
   $("agentCount").textContent = (d.agents||[]).length
-  const tr = (d.agents||[])
-  // recent rows come from /api/traces (full), overview gives counts; fetch details lazily
   const det = await (await fetch("/api/traces")).json()
   $("traceRows").innerHTML = (det.rows||[]).slice(0,8).map(r=>
     `<tr><td><span class="badge agent">${esc(r.agent)}</span></td><td class="op">${esc(r.operation||'')}</td><td class="muted">${esc(r.name||'')}</td><td class="r num">${r.tokens||0}</td></tr>`
@@ -251,16 +330,16 @@ async function tick(){
 
   // security
   const f = d.findings||{}
+  const crit = (f.bySeverity||{}).critical||0, high=(f.bySeverity||{}).high||0
   if(f.total>0 || f.file){
-    const s = f.bySeverity||{}
-    const crit=s.critical||0, high=s.high||0
     $("secSummary").innerHTML = crit===0
       ? `<span class="badge" style="color:var(--up)">PASS</span> ${f.total} checks · 0 critical · <span class="muted">${esc(f.file||'')}</span>`
       : `<span class="badge" style="color:var(--down)">FAIL</span> ${crit} critical · ${high} high · <span class="muted">${esc(f.file||'')}</span>`
-    $("secSev").innerHTML = [["critical",crit],["high",high],["info",s.info||0]]
+    $("secSev").innerHTML = [["critical",crit],["high",high],["info",(f.bySeverity||{}).info||0]]
       .map(([k,n])=>`<span class="${k==='critical'?'critical':k==='high'?'high':'pass'}">${n} ${k}</span>`).join("")
-    $("secRows").innerHTML = (f.items||[]).slice(0,5).map(i=>`<tr><td class="muted">${esc(i.message).slice(0,70)}</td></tr>`).join("")
+    $("secRows").innerHTML = (f.items||[]).slice(0,8).map(i=>`<tr><td class="muted">${esc(i.message).slice(0,90)}</td></tr>`).join("")
   }
+
   // memory
   const m = d.memory||{}
   $("beliefs").textContent = m.beliefs ?? 0
@@ -269,48 +348,73 @@ async function tick(){
     `<tr><td><b>${esc(b.subject)}</b> <span class="op">${esc(b.predicate)}</span> <span class="muted">${esc(b.object)}</span></td></tr>`
   ).join("") || `<tr><td class="${m.error?'err':'empty'}">${m.error?esc(m.error):'memory empty — ask a question or run the demo'}</td></tr>`
 
-  // fleet & runtime (AgenticOps live telemetry)
+  // fleet
   const fl = d.fleet||{}, ags = fl.agents||[], bk = fl.backlog||{}
   $("fleetAgents").textContent = ags.length
-  const bkTotal = (typeof bk.total==='number') ? bk.total
-    : Object.values(bk).reduce((a,b)=>a+(typeof b==='number'?b:0),0)
+  const bkTotal = (typeof bk.total==='number') ? bk.total : Object.values(bk).reduce((a,b)=>a+(typeof b==='number'?b:0),0)
   $("fleetBacklog").textContent = bkTotal ?? 0
   $("fleetRows").innerHTML = ags.map(a=>{
     const st = a.status||a.health||'—'
     const good = /ok|healthy|active|up/i.test(st)
-    return `<tr><td><span class="badge agent">${esc(a.agent||a.name||'—')}</span></td><td class="r"><span class="${good?'':'muted'}" style="${good?'color:var(--up)':''}">${esc(st)}</span></td></tr>`
+    return `<tr><td><span class="badge agent">${esc(a.agent||a.name||'—')}</span></td><td class="r"><span style="${good?'color:var(--up)':''}" class="${good?'':'muted'}">${esc(st)}</span></td></tr>`
   }).join("") || `<tr><td colspan="2" class="empty">${h.ops&&h.ops.active===false?'fleet profile disabled for this engine':(fl.error?esc(fl.error):'fleet warming up…')}</td></tr>`
   $("govRows").innerHTML = `<span class="dot comp" style="display:inline-block;margin-right:7px"></span>governed by the <b>Agentic Product Standard</b> — the contract all layers conform to`
 
   // portfolio (host git+prod snapshot — the cockpit fused into the console)
+  let p = { repos:[], prod:[] }
   try{
-    const p = await (await fetch("/api/portfolio")).json()
+    p = await (await fetch("/api/portfolio")).json()
     const repos = p.repos||[], prod = p.prod||[]
     $("portRepos").textContent = repos.length
     $("portDirty").textContent = repos.filter(r=>(r.dirty||0)>0).length
     $("portUnpushed").textContent = repos.filter(r=>(r.unpushed||0)>0).length
-    $("portDown").textContent = prod.filter(r=>r.code==="000"||String(r.code||"")[0]==="5").length
+    $("portDown").textContent = prod.filter(r=>isDown(r.code)).length
     const sev = r => (r.gone?4:0)+((r.unpushed||0)>0?2:0)+((r.dirty||0)>0?1:0)
     const flags = r => {
       if(r.gone) return '<span style="color:var(--down)">GONE</span>'
-      const f=[]
-      if((r.unpushed||0)>0) f.push(`<span style="color:var(--down)">↑${r.unpushed}</span>`)
-      else if(r.unpushed===-1) f.push('<span class="muted">no-upstream</span>')
-      if((r.dirty||0)>0) f.push(`<span style="color:var(--warn)">●${r.dirty}</span>`)
-      if((r.age_days||0)>21 && r.branch!=="main" && r.branch!=="master") f.push(`<span class="muted">⧗${r.age_days}d</span>`)
-      if(r.email_risk) f.push('<span style="color:var(--teal)">id?</span>')
-      return f.join(" ")||'<span style="color:var(--up)">✓</span>'
+      const g=[]
+      if((r.unpushed||0)>0) g.push(`<span style="color:var(--down)">↑${r.unpushed}</span>`)
+      else if(r.unpushed===-1) g.push('<span class="muted">no-upstream</span>')
+      if((r.dirty||0)>0) g.push(`<span style="color:var(--warn)">●${r.dirty}</span>`)
+      if((r.age_days||0)>21 && r.branch!=="main" && r.branch!=="master") g.push(`<span class="muted">⧗${r.age_days}d</span>`)
+      if(r.email_risk) g.push('<span style="color:var(--teal)">id?</span>')
+      return g.join(" ")||'<span style="color:var(--up)">✓</span>'
     }
     $("portRepoRows").innerHTML = repos.slice().sort((a,b)=>sev(b)-sev(a)||(b.age_days||0)-(a.age_days||0)).map(r=>
       `<tr><td>${esc(r.name)}</td><td class="muted">${esc(r.branch)}</td><td>${flags(r)}</td><td class="r muted">${esc(r.last)}</td></tr>`
     ).join("") || `<tr><td colspan="4" class="${p.error?'err':'empty'}">${p.error?esc(p.error):esc(p.note||'no snapshot — run `agentic snapshot`')}</td></tr>`
     const httpc = c => { if(!c||c==="-") return '<span class="muted">—</span>'; if(c==="000") return '<span style="color:var(--down)">DOWN</span>'; const k=String(c)[0]; return `<span style="color:${k==="2"||k==="3"?"var(--up)":k==="4"?"var(--warn)":"var(--down)"}">${esc(c)}</span>` }
-    const pdown = r => (r.code==="000"||String(r.code||"")[0]==="5")?1:0
-    $("portProdRows").innerHTML = prod.slice().sort((a,b)=>pdown(b)-pdown(a)).map(r=>
+    $("portProdRows").innerHTML = prod.slice().sort((a,b)=>(isDown(b.code)?1:0)-(isDown(a.code)?1:0)).map(r=>
       `<tr><td class="muted">${esc(r.url)}</td><td class="r">${httpc(r.code)}</td><td class="r muted">${esc(r.disk&&r.disk!=="-"?r.disk:"—")}</td></tr>`
     ).join("")
     $("portTag").textContent = p.at ? ("host · "+timeAgo(p.at)) : "host · git + prod"
   }catch(e){}
+
+  // overview tiles + attention + tab badges
+  const repos = p.repos||[], prod = p.prod||[]
+  const nUp = repos.filter(r=>(r.unpushed||0)>0).length
+  const nDirty = repos.filter(r=>(r.dirty||0)>0).length
+  const nDown = prod.filter(r=>isDown(r.code)).length
+  $("ovServices").textContent = `${upN}/${tot}`; $("ovServices").className = "v " + (upN===tot?"up":"warn")
+  $("ovRepos").textContent = repos.length
+  $("ovUnpushed").textContent = nUp; $("ovUnpushed").className = "v " + (nUp?"down":"up")
+  $("ovDown").textContent = nDown; $("ovDown").className = "v " + (nDown?"down":"up")
+  $("ovCost").textContent = usd(cst.total)
+  $("ovBeliefs").textContent = m.beliefs ?? 0
+  const attn = []
+  repos.filter(r=>(r.unpushed||0)>0).forEach(r=>attn.push(["down","↑"+r.unpushed, esc(r.name)+" — unpushed commits (push before you lose them)"]))
+  prod.filter(r=>isDown(r.code)).forEach(r=>attn.push(["down","DOWN", esc(r.name)+" — "+esc(r.url)+" is not responding"]))
+  if(crit>0) attn.push(["down",String(crit), crit+" critical security finding"+(crit>1?"s":"")])
+  if(upN<tot) attn.push(["down",(tot-upN)+"", (tot-upN)+" platform service"+(tot-upN>1?"s":"")+" down"])
+  repos.filter(r=>(r.dirty||0)>0).slice(0,4).forEach(r=>attn.push(["warn","●"+r.dirty, esc(r.name)+" — uncommitted changes"]))
+  $("ovAttention").innerHTML = attn.length
+    ? attn.slice(0,10).map(a=>`<div class="row"><span class="tg ${a[0]}">${a[1]}</span><span>${a[2]}</span></div>`).join("")
+    : `<div class="okrow">✓ all clear — nothing unpushed, prod healthy, no findings</div>`
+  const alertN = nUp + nDown
+  $("badgePortfolio").textContent = alertN || ""
+  $("badgePortfolio").className = "cnt" + (alertN?" alert":"")
+  $("badgeSecurity").textContent = crit || ""
+  $("badgeSecurity").className = "cnt" + (crit?" alert":"")
 
   // live indicator + model-plane liveness (last routed call)
   const scan = d.lastRefresh ? Math.round((Date.now()-new Date(d.lastRefresh).getTime())/1000) : null
