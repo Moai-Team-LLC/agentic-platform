@@ -4,6 +4,10 @@
 *.log
 backups/
 handout.md
+# personal dev-cockpit registry (holds prod IPs + ssh-key refs) — lives in
+# ~/.agentic-cockpit, never in-repo. Belt-and-suspenders if one lands here.
+.agentic-cockpit/
+repos.json
 
 # deps & build
 node_modules/

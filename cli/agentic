@@ -485,6 +485,86 @@ cmd_menubar() {
   fi
 }
 
+# ── code-status ───────────────────────────────────────────────────────────────
+# Portfolio git panel over your personal repo registry (~/.agentic-cockpit/repos.json).
+# HOST-NATIVE: runs git across every repo on disk — no Docker, no platform needed, so
+# it works even when the stack is down. Surfaces the risks that pile up across many
+# repos solo: unpushed commits (lost work), uncommitted changes, stale feature
+# branches, wrong git identity. `--json` emits machine-readable rows (console bridge).
+cmd_code_status() {
+  local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
+  [ -f "$reg" ] || { bad "no repo registry at $(c '1;37' "$reg")"; echo "  seed it with a JSON array of {\"name\",\"path\"} objects, then re-run."; return 1; }
+  local mode=table; [ "${1:-}" = "--json" ] && mode=json
+
+  local rows
+  rows="$(PYTHONIOENCODING=utf-8 python3 -c 'import json,sys
+for r in json.load(open(sys.argv[1],encoding="utf-8")):
+    p=r.get("path","")
+    if p: print(p+"\t"+(r.get("name") or p.rstrip("/").rsplit("/",1)[-1]))' "$reg")" \
+    || { bad "registry is not valid JSON: $reg"; return 1; }
+
+  [ "$mode" = table ] && say "scanning $(printf '%s\n' "$rows" | grep -c .) repos …"
+  local now; now="$(date +%s)"
+  {
+    while IFS=$'\t' read -r p n; do
+      [ -n "$p" ] || continue
+      if ! git -C "$p" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        printf '%s\t%s\tGONE\t-\t-\t-\t-\tmissing\n' "$p" "$n"; continue   # path gone / not a repo (worktrees OK — .git is a file there)
+      fi
+      local br dirty ahead last age email er rel
+      br="$(git -C "$p" branch --show-current 2>/dev/null)"; [ -z "$br" ] && br='(detached)'
+      dirty="$(git -C "$p" status --porcelain 2>/dev/null | grep -c .)"
+      ahead="$(git -C "$p" rev-list --count '@{u}..HEAD' 2>/dev/null || echo -)"
+      last="$(git -C "$p" log -1 --format=%ct 2>/dev/null || echo "$now")"
+      rel="$(git -C "$p" log -1 --format=%cr 2>/dev/null || echo '?')"
+      age=$(( (now - last) / 86400 ))
+      email="$(git -C "$p" config user.email 2>/dev/null)"
+      er='-'; [ "$email" = 'aduchenchuk@gmail.com' ] && er='id?'
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$p" "$n" "$br" "$dirty" "$ahead" "$age" "$er" "$rel"
+    done <<< "$rows"
+  } | PYTHONIOENCODING=utf-8 python3 -c '
+import sys,json,re
+rows=[]
+for line in sys.stdin:
+    line=line.rstrip("\n")
+    if not line.strip(): continue
+    p,n,br,dirty,ahead,age,er,rel=line.split("\t")
+    rows.append(dict(name=n,path=p,branch=br,
+        dirty=int(dirty) if dirty.isdigit() else 0,
+        unpushed=int(ahead) if ahead.isdigit() else -1,  # -1 = no upstream
+        age_days=int(age) if age.lstrip("-").isdigit() else 0,
+        email_risk=(er=="id?"), last=rel, gone=(br=="GONE")))
+mode=sys.argv[1] if len(sys.argv)>1 else "table"
+if mode=="json":
+    print(json.dumps(rows,ensure_ascii=False,indent=2)); sys.exit(0)
+def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
+STALE=21
+def is_stale(r): return r["age_days"]>STALE and r["branch"] not in ("main","master")
+rows.sort(key=lambda r:(r["unpushed"]>0,r["dirty"]>0,is_stale(r),r["age_days"]),reverse=True)
+def flags(r):
+    if r["gone"]: return col("GONE","1;31")
+    f=[]
+    if r["unpushed"]>0: f.append(col("↑%d"%r["unpushed"],"1;31"))
+    elif r["unpushed"]<0: f.append(col("no-upstream","2"))
+    if r["dirty"]>0: f.append(col("●%d"%r["dirty"],"1;33"))
+    if is_stale(r): f.append(col("⧗%dd"%r["age_days"],"2"))
+    if r["email_risk"]: f.append(col("id?","1;35"))
+    return " ".join(f) if f else col("✓","1;32")
+w_n=max([len(r["name"]) for r in rows]+[4])+1
+w_b=max([len(r["branch"]) for r in rows]+[6])+1
+print()
+print("  "+col("%-*s %-*s %-24s %s"%(w_n,"REPO",w_b,"BRANCH","FLAGS","LAST"),"1;37"))
+for r in rows:
+    fl=flags(r); vis=len(re.sub(r"\033\[[0-9;]*m","",fl))
+    print("  %-*s %-*s %s%s %s"%(w_n,r["name"],w_b,r["branch"],fl," "*max(1,24-vis),col(r["last"],"2")))
+nd=sum(1 for r in rows if r["dirty"]>0); nu=sum(1 for r in rows if r["unpushed"]>0)
+ns=sum(1 for r in rows if is_stale(r)); ng=sum(1 for r in rows if r["gone"])
+print()
+print("  "+col("%d repos"%len(rows),"1;36")+" · %s dirty · %s unpushed · %d stale(>%dd)%s"%(
+    col(nd,"1;33") if nd else "0", col(nu,"1;31") if nu else "0", ns, STALE, (" · %d gone"%ng) if ng else ""))
+' "$mode"
+}
+
 usage() {
   cat <<'USAGE'
 agentic — the Agentic Platform control plane
@@ -495,6 +575,7 @@ agentic — the Agentic Platform control plane
   agentic up               build + start the whole stack, wired
   agentic down             stop the stack (data volumes preserved)
   agentic status           aggregate health verdict + per-service states
+  agentic code-status      portfolio git status across all your repos (host, registry-driven)
   agentic doctor           end-to-end readiness (routing + Claude's MCP path)
   agentic ask "question"   ask AgenticMind a question from the terminal
   agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
@@ -517,6 +598,7 @@ USAGE
 case "${1:-}" in
   init) shift; cmd_init "$@" ;; handout) cmd_handout ;;
   up) cmd_up ;; down) cmd_down ;; status) cmd_status ;; doctor) cmd_doctor ;;
+  code-status|repos) shift 2>/dev/null || true; cmd_code_status "$@" ;;
   console) cmd_console ;; app) cmd_app ;; dockapp) cmd_dockapp ;; menubar) cmd_menubar ;;
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;

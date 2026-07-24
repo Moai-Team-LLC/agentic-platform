@@ -1,0 +1,24 @@
+[
+  {
+    "name": "my-product",
+    "path": "/Users/me/Code/my-product",
+    "stack": "next+drizzle",
+    "prod_url": "app.example.com",
+    "droplet_ip": "203.0.113.10",
+    "ssh_key": "~/.ssh/my-product_deploy",
+    "prod_branch": "main",
+    "deploy_cmd": "cd /Users/me/Code/my-product && bash deploy/deploy.sh",
+    "notes": "flagship — never take down"
+  },
+  {
+    "name": "a-library",
+    "path": "/Users/me/Code/a-library",
+    "stack": "typescript",
+    "prod_url": "",
+    "droplet_ip": "",
+    "ssh_key": "",
+    "prod_branch": "",
+    "deploy_cmd": "",
+    "notes": "library — not deployed"
+  }
+]
