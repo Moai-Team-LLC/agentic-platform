@@ -8,6 +8,8 @@ handout.md
 # ~/.agentic-cockpit, never in-repo. Belt-and-suspenders if one lands here.
 .agentic-cockpit/
 repos.json
+# dev-cockpit Phase-2 living model artifacts (per-repo, local)
+.cockpit/
 
 # deps & build
 node_modules/

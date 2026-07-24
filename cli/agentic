@@ -775,6 +775,77 @@ print(out)
   command -v open >/dev/null && open "$out" 2>/dev/null || true
 }
 
+# ── model (Phase 2, EXPERIMENTAL — one repo, prove drift-detection first) ──────
+# A living structural model of ONE repo plus a REAL drift detector. `agentic model
+# <path>` snapshots the repo's code surface (per-file sha1) into .cockpit/; `--check`
+# recomputes and flags which files changed since — so the model is kept honest by
+# measurement, not by a CLAUDE.md plea. If it doesn't earn its keep on one repo,
+# kill it; do not spread to the others.
+cmd_model() {
+  local path='' check=0
+  for a in "$@"; do case "$a" in --check) check=1;; --*) ;; *) [ -z "$path" ] && path="$a";; esac; done
+  [ -n "$path" ] || path="$PWD"
+  git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { bad "not a git repo: $path"; return 1; }
+  local root mdir; root="$(git -C "$path" rev-parse --show-toplevel)"; mdir="$root/.cockpit"
+
+  if [ "$check" = 1 ]; then
+    [ -f "$mdir/model.lock" ] || { bad "no model for $(basename "$root") — run: agentic model \"$root\""; return 1; }
+    PYTHONIOENCODING=utf-8 python3 - "$root" "$mdir" <<'PY'
+import os,sys,json,hashlib,subprocess
+root,mdir=sys.argv[1],sys.argv[2]
+def sha(p):
+    try:
+        with open(os.path.join(root,p),"rb") as fh: return hashlib.sha1(fh.read()).hexdigest()
+    except Exception: return ""
+lock=json.load(open(os.path.join(mdir,"model.lock"),encoding="utf-8")); stored=lock["files"]
+cur=set(subprocess.check_output(["git","-C",root,"ls-files"]).decode("utf-8","replace").splitlines())
+CODE=(".ts",".tsx",".js",".jsx",".go",".py",".sh",".rs",".sql",".yml",".yaml",".json",".md")
+changed=[f for f in stored if sha(f)!=stored[f]]
+added=[f for f in cur if f.endswith(CODE) and f not in stored]
+n=len(changed)+len(added)
+if n==0:
+    print("  \033[1;32m✓\033[0m model in sync — %d files, commit %s"%(len(stored),lock.get("commit","?")[:8])); sys.exit(0)
+print("  \033[1;33m⏳ model drift: %d file(s) changed since the model was built\033[0m"%n)
+for f in sorted(changed)[:15]: print("    \033[1;33m~\033[0m %s"%f)
+for f in sorted(added)[:10]:  print("    \033[1;32m+\033[0m %s"%f)
+print("  \033[2mrebuild: agentic model %s\033[0m"%root)
+sys.exit(1)
+PY
+    return $?
+  fi
+
+  mkdir -p "$mdir"
+  PYTHONIOENCODING=utf-8 python3 - "$root" "$mdir" <<'PY'
+import os,sys,json,hashlib,subprocess,collections
+root,mdir=sys.argv[1],sys.argv[2]
+files=subprocess.check_output(["git","-C",root,"ls-files"]).decode("utf-8","replace").splitlines()
+CODE=(".ts",".tsx",".js",".jsx",".go",".py",".sh",".rs",".sql",".yml",".yaml",".json",".md")
+code=[f for f in files if f.endswith(CODE)]
+def sha(p):
+    try:
+        with open(os.path.join(root,p),"rb") as fh: return hashlib.sha1(fh.read()).hexdigest()
+    except Exception: return ""
+locks={f:h for f,h in ((f,sha(f)) for f in code) if h}
+try: head=subprocess.check_output(["git","-C",root,"rev-parse","HEAD"]).decode().strip()
+except Exception: head="?"
+json.dump({"commit":head,"files":locks}, open(os.path.join(mdir,"model.lock"),"w",encoding="utf-8"), ensure_ascii=False, indent=1)
+dirs=collections.Counter((f.split("/")[0] if "/" in f else "(root)") for f in files)
+langs=collections.Counter(os.path.splitext(f)[1] for f in code)
+ep=[f for f in files if any(k in f.lower() for k in ("cli/","/server","index.","/main.","package.json","docker-compose","go.mod"))][:24]
+L=["# Model — %s"%os.path.basename(root),"",
+   "_structural snapshot · commit %s · %d tracked, %d code files_"%(head[:8],len(files),len(code)),"",
+   "## Top-level areas"]
+L+=["- **%s** — %d files"%(d,c) for d,c in dirs.most_common(20)]
+L+=["","## Languages"," · ".join("%s:%d"%(e or "(none)",c) for e,c in langs.most_common()),"",
+    "## Entrypoints / surfaces"]
+L+=["- `%s`"%e for e in ep]
+L+=["","> Living model. Run `agentic model --check` after edits; rebuild when it drifts."]
+open(os.path.join(mdir,"MODEL.md"),"w",encoding="utf-8").write("\n".join(L)+"\n")
+print("  built: %d code files hashed · %d areas"%(len(locks),len(dirs)))
+PY
+  ok "model → $(c '1;4;36' "$mdir/MODEL.md") + model.lock"
+}
+
 usage() {
   cat <<'USAGE'
 agentic — the Agentic Platform control plane
@@ -789,6 +860,7 @@ agentic — the Agentic Platform control plane
   agentic prod-health [--disk]  ping every prod URL (+ ssh droplet disk) from the registry
   agentic deploy <repo> [--run] show (or run) a repo's deploy command, forced `cd` into it
   agentic cockpit          render + open the HTML portfolio panel (git + prod, host-native)
+  agentic model <path> [--check]  living structural model of a repo + drift check (experimental)
   agentic doctor           end-to-end readiness (routing + Claude's MCP path)
   agentic ask "question"   ask AgenticMind a question from the terminal
   agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
@@ -815,6 +887,7 @@ case "${1:-}" in
   prod-health|health) shift 2>/dev/null || true; cmd_prod_health "$@" ;;
   deploy) shift; cmd_deploy "$@" ;;
   cockpit|panel) cmd_cockpit ;;
+  model) shift; cmd_model "$@" ;;
   console) cmd_console ;; app) cmd_app ;; dockapp) cmd_dockapp ;; menubar) cmd_menubar ;;
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
