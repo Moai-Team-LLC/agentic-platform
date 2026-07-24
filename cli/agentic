@@ -580,12 +580,12 @@ cmd_prod_health() {
 for r in json.load(open(sys.argv[1],encoding="utf-8")):
     u=(r.get("prod_url") or "").strip(); ip=(r.get("droplet_ip") or "").strip()
     if u: u=re.split(r"[\s(]", u)[0]   # first clean host — registry urls carry notes / extra domains
-    if u or ip: print("\t".join([r.get("name",""),u,ip,(r.get("ssh_key") or "").strip()]))' "$reg")" \
+    if u or ip: print("\x1f".join([r.get("name",""),u,ip,(r.get("ssh_key") or "").strip()]))' "$reg")" \
     || { bad "registry is not valid JSON: $reg"; return 1; }
 
   [ "$mode" = table ] && say "probing $(printf '%s\n' "$rows" | grep -c .) prod targets$([ "$do_disk" = 1 ] && echo ' (+disk via ssh)')…"
   {
-    while IFS=$'\t' read -r n url ip key; do
+    while IFS=$'\x1f' read -r n url ip key; do
       [ -n "$n" ] || continue
       local code='-' disk='-' full kp
       if [ -n "$url" ]; then
@@ -667,14 +667,14 @@ m=[r for r in data if r.get("name","").lower()==q] or [r for r in data if q in r
 if not m: sys.exit(3)
 if len(m)>1: sys.stderr.write(", ".join(r.get("name","") for r in m)); sys.exit(4)
 r=m[0]
-print("\t".join([r.get("name",""),r.get("path",""),r.get("deploy_cmd") or "",r.get("prod_branch") or "",r.get("prod_url") or ""]))' "$reg" "$name" 2>/tmp/agentic_deploy_err)"
+print("\x1f".join([r.get("name",""),r.get("path",""),r.get("deploy_cmd") or "",r.get("prod_branch") or "",r.get("prod_url") or ""]))' "$reg" "$name" 2>/tmp/agentic_deploy_err)"
   local rc=$?
   [ $rc -eq 3 ] && { bad "no repo matching '$name' in registry"; return 1; }
   [ $rc -eq 4 ] && { bad "ambiguous '$name' — matches: $(cat /tmp/agentic_deploy_err)"; return 1; }
   [ $rc -ne 0 ] && { bad "registry read failed"; return 1; }
 
   local rn rpath rcmd rbranch rurl
-  IFS=$'\t' read -r rn rpath rcmd rbranch rurl <<< "$rec"
+  IFS=$'\x1f' read -r rn rpath rcmd rbranch rurl <<< "$rec"
   say "deploy target: $(c '1;37' "$rn")"
   echo "  path:   ${rpath:-—}"
   echo "  branch: ${rbranch:-—}   prod: ${rurl:-—}"
