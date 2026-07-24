@@ -846,6 +846,30 @@ PY
   ok "model → $(c '1;4;36' "$mdir/MODEL.md") + model.lock"
 }
 
+# ── snapshot ──────────────────────────────────────────────────────────────────
+# Writes a portfolio snapshot (git status + prod health) to ~/.agentic-cockpit so
+# the containerized console can serve it as a "Portfolio" tab — the bridge that
+# fuses the cockpit INTO the platform console (one desktop app via `agentic dockapp`).
+# HOST-side because only the host sees your repos; the console just reads the JSON.
+cmd_snapshot() {
+  local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
+  [ -f "$reg" ] || { bad "no repo registry at $(c '1;37' "$reg")"; return 1; }
+  local out="$HOME/.agentic-cockpit/snapshot.json"
+  say "building portfolio snapshot (git × N + prod pings)…"
+  local repos prod at
+  repos="$(cmd_code_status --json 2>/dev/null)"
+  prod="$(cmd_prod_health --json 2>/dev/null)"
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  REPOS_JSON="$repos" PROD_JSON="$prod" AT="$at" OUT="$out" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json
+o={"repos":json.loads(os.environ.get("REPOS_JSON") or "[]"),
+   "prod":json.loads(os.environ.get("PROD_JSON") or "[]"),
+   "at":os.environ.get("AT")}
+open(os.environ["OUT"],"w",encoding="utf-8").write(json.dumps(o,ensure_ascii=False,indent=1))
+print("  repos:%d prod:%d"%(len(o["repos"]),len(o["prod"])))' || { bad "snapshot failed"; return 1; }
+  ok "snapshot → $(c '1;4;36' "$out") — console serves it as the Portfolio tab"
+}
+
 usage() {
   cat <<'USAGE'
 agentic — the Agentic Platform control plane
@@ -861,6 +885,7 @@ agentic — the Agentic Platform control plane
   agentic deploy <repo> [--run] show (or run) a repo's deploy command, forced `cd` into it
   agentic cockpit          render + open the HTML portfolio panel (git + prod, host-native)
   agentic model <path> [--check]  living structural model of a repo + drift check (experimental)
+  agentic snapshot         write portfolio snapshot → console's Portfolio tab (fuses cockpit in)
   agentic doctor           end-to-end readiness (routing + Claude's MCP path)
   agentic ask "question"   ask AgenticMind a question from the terminal
   agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
@@ -888,6 +913,7 @@ case "${1:-}" in
   deploy) shift; cmd_deploy "$@" ;;
   cockpit|panel) cmd_cockpit ;;
   model) shift; cmd_model "$@" ;;
+  snapshot) cmd_snapshot ;;
   console) cmd_console ;; app) cmd_app ;; dockapp) cmd_dockapp ;; menubar) cmd_menubar ;;
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;

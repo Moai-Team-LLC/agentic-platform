@@ -167,12 +167,34 @@
       </div>
     </section>
   </div>
+
+  <section class="card" style="margin-top:16px">
+    <h2>🗂️ Portfolio <span class="tag" id="portTag">host · git + prod</span></h2>
+    <div class="body">
+      <div class="kpis">
+        <div class="kpi"><div class="v teal" id="portRepos">—</div><div class="l">repos</div></div>
+        <div class="kpi"><div class="v" id="portDirty" style="color:var(--warn)">—</div><div class="l">dirty</div></div>
+        <div class="kpi"><div class="v" id="portUnpushed" style="color:var(--down)">—</div><div class="l">unpushed</div></div>
+        <div class="kpi"><div class="v" id="portDown" style="color:var(--down)">—</div><div class="l">prod down</div></div>
+      </div>
+      <div style="max-height:300px;overflow:auto;margin-top:6px">
+        <table><thead><tr><th>repo</th><th>branch</th><th>flags</th><th class="r">last</th></tr></thead>
+        <tbody id="portRepoRows"><tr><td colspan="4" class="empty">no snapshot yet — run <span class="badge">agentic snapshot</span></td></tr></tbody></table>
+      </div>
+      <div style="max-height:200px;overflow:auto;margin-top:12px">
+        <table><thead><tr><th>prod url</th><th class="r">http</th><th class="r">disk</th></tr></thead>
+        <tbody id="portProdRows"></tbody></table>
+      </div>
+    </div>
+  </section>
+
   <div class="foot" id="foot"><span class="live"><span class="b"></span> live</span> · run → remember → measure → assure</div>
 </main>
 <script>
 const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]))
 const usd = (n) => "$" + (Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:4,maximumFractionDigits:6})
+const timeAgo = (iso) => { try{ const s=Math.round((Date.now()-new Date(iso).getTime())/1000); return s<90?`${s}s ago`:s<5400?`${Math.round(s/60)}m ago`:`${Math.round(s/3600)}h ago` }catch{ return "" } }
 
 const LOOP = [
   ["standard","Standard","contract"],
@@ -259,6 +281,36 @@ async function tick(){
     return `<tr><td><span class="badge agent">${esc(a.agent||a.name||'—')}</span></td><td class="r"><span class="${good?'':'muted'}" style="${good?'color:var(--up)':''}">${esc(st)}</span></td></tr>`
   }).join("") || `<tr><td colspan="2" class="empty">${h.ops&&h.ops.active===false?'fleet profile disabled for this engine':(fl.error?esc(fl.error):'fleet warming up…')}</td></tr>`
   $("govRows").innerHTML = `<span class="dot comp" style="display:inline-block;margin-right:7px"></span>governed by the <b>Agentic Product Standard</b> — the contract all layers conform to`
+
+  // portfolio (host git+prod snapshot — the cockpit fused into the console)
+  try{
+    const p = await (await fetch("/api/portfolio")).json()
+    const repos = p.repos||[], prod = p.prod||[]
+    $("portRepos").textContent = repos.length
+    $("portDirty").textContent = repos.filter(r=>(r.dirty||0)>0).length
+    $("portUnpushed").textContent = repos.filter(r=>(r.unpushed||0)>0).length
+    $("portDown").textContent = prod.filter(r=>r.code==="000"||String(r.code||"")[0]==="5").length
+    const sev = r => (r.gone?4:0)+((r.unpushed||0)>0?2:0)+((r.dirty||0)>0?1:0)
+    const flags = r => {
+      if(r.gone) return '<span style="color:var(--down)">GONE</span>'
+      const f=[]
+      if((r.unpushed||0)>0) f.push(`<span style="color:var(--down)">↑${r.unpushed}</span>`)
+      else if(r.unpushed===-1) f.push('<span class="muted">no-upstream</span>')
+      if((r.dirty||0)>0) f.push(`<span style="color:var(--warn)">●${r.dirty}</span>`)
+      if((r.age_days||0)>21 && r.branch!=="main" && r.branch!=="master") f.push(`<span class="muted">⧗${r.age_days}d</span>`)
+      if(r.email_risk) f.push('<span style="color:var(--teal)">id?</span>')
+      return f.join(" ")||'<span style="color:var(--up)">✓</span>'
+    }
+    $("portRepoRows").innerHTML = repos.slice().sort((a,b)=>sev(b)-sev(a)||(b.age_days||0)-(a.age_days||0)).map(r=>
+      `<tr><td>${esc(r.name)}</td><td class="muted">${esc(r.branch)}</td><td>${flags(r)}</td><td class="r muted">${esc(r.last)}</td></tr>`
+    ).join("") || `<tr><td colspan="4" class="${p.error?'err':'empty'}">${p.error?esc(p.error):esc(p.note||'no snapshot — run `agentic snapshot`')}</td></tr>`
+    const httpc = c => { if(!c||c==="-") return '<span class="muted">—</span>'; if(c==="000") return '<span style="color:var(--down)">DOWN</span>'; const k=String(c)[0]; return `<span style="color:${k==="2"||k==="3"?"var(--up)":k==="4"?"var(--warn)":"var(--down)"}">${esc(c)}</span>` }
+    const pdown = r => (r.code==="000"||String(r.code||"")[0]==="5")?1:0
+    $("portProdRows").innerHTML = prod.slice().sort((a,b)=>pdown(b)-pdown(a)).map(r=>
+      `<tr><td class="muted">${esc(r.url)}</td><td class="r">${httpc(r.code)}</td><td class="r muted">${esc(r.disk&&r.disk!=="-"?r.disk:"—")}</td></tr>`
+    ).join("")
+    $("portTag").textContent = p.at ? ("host · "+timeAgo(p.at)) : "host · git + prod"
+  }catch(e){}
 
   // live indicator + model-plane liveness (last routed call)
   const scan = d.lastRefresh ? Math.round((Date.now()-new Date(d.lastRefresh).getTime())/1000) : null

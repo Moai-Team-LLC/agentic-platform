@@ -259,9 +259,13 @@ services:
       APL_PG_PORT: "5432"
       GATEWAY_EVIDENCE_FILE: /gateway-data/evidence.jsonl
       MANIFEST_SARIF: /run-data/agenticmind.sarif
+      # dev-cockpit bridge: the host writes a portfolio snapshot here (agentic snapshot),
+      # the console serves it as the Portfolio tab — cockpit fused into the one app.
+      PORTFOLIO_FILE: /cockpit/snapshot.json
     volumes:
       - gateway-data:/gateway-data:ro
       - ../.run:/run-data:ro
+      - ${HOME}/.agentic-cockpit:/cockpit:ro
     ports: ["127.0.0.1:${CONSOLE_PORT:-4600}:4600"]
     healthcheck:
       test: ["CMD-SHELL", "bun -e \"fetch('http://localhost:4600/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]

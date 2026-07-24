@@ -28,6 +28,7 @@ const GATEWAY_DIR = process.env.GATEWAY_DIR ?? ""
 const GATEWAY_EVIDENCE_FILE = process.env.GATEWAY_EVIDENCE_FILE ?? ""
 const ASSURANCE_DIR = process.env.ASSURANCE_DIR ?? ""
 const MANIFEST_SARIF = process.env.MANIFEST_SARIF ?? ""
+const PORTFOLIO_FILE = process.env.PORTFOLIO_FILE ?? "/cockpit/snapshot.json"
 
 const aplSql = new SQL(`postgresql://postgres:postgres@${APL_PG_HOST}:${APL_PG}/postgres`)
 const mindSql = new SQL(`postgresql://postgres:mysecretpassword@${MIND_PG_HOST}:${MIND_PG}/postgres`)
@@ -235,6 +236,19 @@ const ask = async (req: Request) => {
   }
 }
 
+// dev-cockpit portfolio: the host writes a git+prod snapshot to /cockpit
+// (`agentic snapshot`); the console serves it read-only as the Portfolio tab —
+// the bridge that fuses the cockpit into this one app. Absent ⇒ a hint, not an error.
+const portfolio = () => {
+  try {
+    if (!existsSync(PORTFOLIO_FILE)) return { repos: [], prod: [], at: null, note: "run `agentic snapshot` on the host" }
+    const d = JSON.parse(readFileSync(PORTFOLIO_FILE, "utf8"))
+    return { repos: d.repos ?? [], prod: d.prod ?? [], at: d.at ?? null }
+  } catch {
+    return { repos: [], prod: [], at: null, error: "portfolio snapshot unreadable" }
+  }
+}
+
 const json = (v: unknown) => new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } })
 
 Bun.serve({
@@ -255,6 +269,8 @@ Bun.serve({
         return json(await memory())
       case "/api/fleet":
         return json(await fleet())
+      case "/api/portfolio":
+        return json(portfolio())
       case "/api/overview": {
         const [h, t, m, fl] = await Promise.all([health(), traces(), memory(), fleet()])
         return json({
