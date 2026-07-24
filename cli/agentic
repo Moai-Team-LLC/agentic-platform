@@ -572,7 +572,8 @@ print("  "+col("%d repos"%len(rows),"1;36")+" · %s dirty · %s unpushed · %d s
 cmd_prod_health() {
   local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
   [ -f "$reg" ] || { bad "no repo registry at $(c '1;37' "$reg")"; return 1; }
-  local do_disk=0; [ "${1:-}" = "--disk" ] && do_disk=1
+  local do_disk=0 mode=table
+  for a in "$@"; do case "$a" in --disk) do_disk=1;; --json) mode=json;; esac; done
 
   local rows
   rows="$(PYTHONIOENCODING=utf-8 python3 -c 'import json,sys,re
@@ -582,7 +583,7 @@ for r in json.load(open(sys.argv[1],encoding="utf-8")):
     if u or ip: print("\t".join([r.get("name",""),u,ip,(r.get("ssh_key") or "").strip()]))' "$reg")" \
     || { bad "registry is not valid JSON: $reg"; return 1; }
 
-  say "probing $(printf '%s\n' "$rows" | grep -c .) prod targets$([ "$do_disk" = 1 ] && echo ' (+disk via ssh)')…"
+  [ "$mode" = table ] && say "probing $(printf '%s\n' "$rows" | grep -c .) prod targets$([ "$do_disk" = 1 ] && echo ' (+disk via ssh)')…"
   {
     while IFS=$'\t' read -r n url ip key; do
       [ -n "$n" ] || continue
@@ -601,12 +602,14 @@ for r in json.load(open(sys.argv[1],encoding="utf-8")):
       printf '%s\t%s\t%s\t%s\n' "$n" "${url:--}" "$code" "$disk"
     done <<< "$rows"
   } | PYTHONIOENCODING=utf-8 python3 -c '
-import sys,re
+import sys,re,json
 rows=[]
 for line in sys.stdin:
     line=line.rstrip("\n")
     if not line.strip(): continue
     n,url,code,disk=line.split("\t"); rows.append(dict(name=n,url=url,code=code,disk=disk))
+if (sys.argv[1] if len(sys.argv)>1 else "table")=="json":
+    print(json.dumps(rows,ensure_ascii=False,indent=2)); sys.exit(0)
 def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
 def diskpct(d):
     try: return int(d[:-1]) if d.endswith("%") else int(d)
@@ -642,7 +645,7 @@ warn=sum(1 for r in rows if (r["code"] and r["code"][:1]=="4") or (diskpct(r["di
 print()
 print("  "+col("%d targets"%len(rows),"1;36")+" · %s down · %s warn"%(
     col(down,"1;31") if down else "0", col(warn,"1;33") if warn else "0"))
-'
+' "$mode"
 }
 
 # ── deploy ────────────────────────────────────────────────────────────────────
@@ -688,6 +691,90 @@ print("\t".join([r.get("name",""),r.get("path",""),r.get("deploy_cmd") or "",r.g
   fi
 }
 
+# ── cockpit ───────────────────────────────────────────────────────────────────
+# Render a self-contained HTML panel of the whole portfolio (git + prod health)
+# from the registry and open it. HOST-NATIVE by design: the platform console runs
+# in a container that can't see your host repos, so the visual panel is generated
+# on the host from the same --json the CLI already emits — no container, no risk.
+cmd_cockpit() {
+  local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
+  [ -f "$reg" ] || { bad "no repo registry at $(c '1;37' "$reg")"; return 1; }
+  local out="${AGENTIC_COCKPIT_HTML:-$HOME/.agentic-cockpit/cockpit.html}"
+  say "collecting portfolio (git × N + prod pings)…"
+  local repos prod
+  repos="$(cmd_code_status --json 2>/dev/null)"
+  prod="$(cmd_prod_health --json 2>/dev/null)"
+  REPOS_JSON="$repos" PROD_JSON="$prod" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json,html,datetime
+repos=json.loads(os.environ.get("REPOS_JSON") or "[]")
+prod=json.loads(os.environ.get("PROD_JSON") or "[]")
+now=datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+def esc(s): return html.escape(str(s if s is not None else ""))
+def rflags(r):
+    if r.get("gone"): return "<span class=bad>GONE</span>"
+    f=[]; u=r.get("unpushed")
+    if isinstance(u,int) and u>0: f.append("<span class=bad>&#8593;%d</span>"%u)
+    elif u==-1: f.append("<span class=dim>no-upstream</span>")
+    if (r.get("dirty") or 0)>0: f.append("<span class=warn>&#9679;%d</span>"%r["dirty"])
+    if (r.get("age_days") or 0)>21 and r.get("branch") not in ("main","master"): f.append("<span class=dim>&#9203;%dd</span>"%r["age_days"])
+    if r.get("email_risk"): f.append("<span class=id>id?</span>")
+    return " ".join(f) or "<span class=ok>&#10003;</span>"
+def rsev(r): return ((r.get("unpushed") or 0)>0,(r.get("dirty") or 0)>0,r.get("gone",False),r.get("age_days") or 0)
+def httpcell(c):
+    if c in ("-",""," ") or c is None: return "<span class=dim>&mdash;</span>"
+    if c=="000": return "<span class=bad>DOWN</span>"
+    k=c[:1]; cls="ok" if k in("2","3") else "warn" if k=="4" else "bad" if k=="5" else "dim"
+    return "<span class=%s>%s</span>"%(cls,esc(c))
+def diskcell(d):
+    try: v=int(str(d)[:-1]) if str(d).endswith("%") else int(d)
+    except: return "<span class=dim>%s</span>"%esc(d)
+    cls="bad" if v>=90 else "warn" if v>=85 else "ok"
+    return "<span class=%s>%s</span>"%(cls,esc(d))
+rrows="".join("<tr><td>%s</td><td class=dim>%s</td><td>%s</td><td class=dim>%s</td></tr>"%(
+    esc(r.get("name")),esc(r.get("branch")),rflags(r),esc(r.get("last"))) for r in sorted(repos,key=rsev,reverse=True))
+prows="".join("<tr><td>%s</td><td class=dim>%s</td><td>%s</td><td>%s</td></tr>"%(
+    esc(r.get("name")),esc(r.get("url")),httpcell(r.get("code")),diskcell(r.get("disk"))) for r in sorted(prod,key=lambda r:(r.get("code")=="000" or (r.get("code") or "")[:1]=="5"),reverse=True))
+nd=sum(1 for r in repos if (r.get("dirty") or 0)>0); nu=sum(1 for r in repos if (r.get("unpushed") or 0)>0)
+down=sum(1 for r in prod if r.get("code")=="000" or (r.get("code") or "")[:1]=="5")
+tpl="""<!doctype html><meta charset=utf-8><title>Agentic Cockpit</title>
+<style>
+:root{color-scheme:dark}
+body{background:#0b0e14;color:#c9d1d9;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:28px}
+h1{font-size:15px;color:#e6edf3;margin:0 0 2px;font-weight:600}
+.sub{color:#6e7681;font-size:12px;margin-bottom:22px}
+.cards{display:flex;gap:12px;margin-bottom:8px;flex-wrap:wrap}
+.card{background:#111722;border:1px solid #21262d;border-radius:10px;padding:12px 16px;min-width:96px}
+.card b{font-size:20px;color:#e6edf3;display:block}
+.card span{color:#6e7681;font-size:11px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8b949e;margin:26px 0 8px}
+table{width:100%;border-collapse:collapse;background:#0d1117;border:1px solid #21262d;border-radius:10px;overflow:hidden}
+td,th{padding:6px 12px;text-align:left;border-bottom:1px solid #161b22;white-space:nowrap}
+th{color:#6e7681;font-weight:500;font-size:11px;text-transform:uppercase}
+tr:last-child td{border-bottom:0}
+td:first-child{color:#e6edf3}
+.ok{color:#3fb950}.warn{color:#d29922}.bad{color:#f85149}.dim{color:#6e7681}.id{color:#bc8cff}
+</style>
+<h1>&#9889; Agentic Cockpit</h1><div class=sub>@@NOW@@ &middot; @@NREPO@@ repos &middot; @@NPROD@@ prod targets</div>
+<div class=cards>
+<div class=card><b class=warn>@@ND@@</b><span>dirty</span></div>
+<div class=card><b class=bad>@@NU@@</b><span>unpushed</span></div>
+<div class=card><b class=bad>@@DOWN@@</b><span>prod down</span></div>
+</div>
+<h2>Repositories</h2>
+<table><tr><th>repo</th><th>branch</th><th>flags</th><th>last commit</th></tr>@@RROWS@@</table>
+<h2>Production</h2>
+<table><tr><th>repo</th><th>url</th><th>http</th><th>disk</th></tr>@@PROWS@@</table>
+"""
+out=(tpl.replace("@@NOW@@",now).replace("@@NREPO@@",str(len(repos))).replace("@@NPROD@@",str(len(prod)))
+     .replace("@@ND@@",str(nd)).replace("@@NU@@",str(nu)).replace("@@DOWN@@",str(down))
+     .replace("@@RROWS@@",rrows).replace("@@PROWS@@",prows))
+print(out)
+' > "$out"
+  [ $? -eq 0 ] && [ -s "$out" ] || { bad "failed to render panel"; return 1; }
+  ok "cockpit → $(c '1;4;36' "file://$out")"
+  command -v open >/dev/null && open "$out" 2>/dev/null || true
+}
+
 usage() {
   cat <<'USAGE'
 agentic — the Agentic Platform control plane
@@ -701,6 +788,7 @@ agentic — the Agentic Platform control plane
   agentic code-status      portfolio git status across all your repos (host, registry-driven)
   agentic prod-health [--disk]  ping every prod URL (+ ssh droplet disk) from the registry
   agentic deploy <repo> [--run] show (or run) a repo's deploy command, forced `cd` into it
+  agentic cockpit          render + open the HTML portfolio panel (git + prod, host-native)
   agentic doctor           end-to-end readiness (routing + Claude's MCP path)
   agentic ask "question"   ask AgenticMind a question from the terminal
   agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
@@ -726,6 +814,7 @@ case "${1:-}" in
   code-status|repos) shift 2>/dev/null || true; cmd_code_status "$@" ;;
   prod-health|health) shift 2>/dev/null || true; cmd_prod_health "$@" ;;
   deploy) shift; cmd_deploy "$@" ;;
+  cockpit|panel) cmd_cockpit ;;
   console) cmd_console ;; app) cmd_app ;; dockapp) cmd_dockapp ;; menubar) cmd_menubar ;;
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
