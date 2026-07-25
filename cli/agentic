@@ -996,12 +996,12 @@ _phase_agent() { case "$1" in
   *) echo "—";; esac; }
 
 cmd_brief() {
-  [ -f "$PHASES_FILE" ] || { warn "no phases yet — run: agentic phase seed"; return 0; }
+  [ -f "$PROJECTS_FILE" ] || { warn "no projects yet — run: agentic project seed"; return 0; }
   local snap="$HOME/.agentic-cockpit/snapshot.json"
   say "фокус-дайджест — $(date '+%a %d %b, %H:%M')"
-  PHASES="$PHASES_FILE" SNAP="$snap" PYTHONIOENCODING=utf-8 python3 -c '
+  PROJ="$PROJECTS_FILE" SNAP="$snap" PYTHONIOENCODING=utf-8 python3 -c '
 import os,json
-ph=json.load(open(os.environ["PHASES"],encoding="utf-8"))
+pj=json.load(open(os.environ["PROJ"],encoding="utf-8"))
 snap={}
 try: snap=json.load(open(os.environ["SNAP"],encoding="utf-8"))
 except Exception: pass
@@ -1010,85 +1010,130 @@ prod={p.get("name",""):(p.get("code","") or "") for p in snap.get("prod",[])}
 down=lambda c: c=="000" or c[:1]=="5"
 def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
 mrank={"paying":0,"near":1,"users":2,"none":3}
-active=[(n,p) for n,p in ph.items() if p.get("phase") not in ("frozen","sunset")]
-active.sort(key=lambda kv:(mrank.get(kv[1].get("money"),9), 0 if kv[1].get("focus") else 1))
 AG={"idea":"validate","building":"finish","shipped":"outreach (GTM)","live":"monetize","earning":"grow"}
+def pgit(p):
+    up=0; downs=[]
+    for r in p.get("repos",{}):
+        u=git.get(r,{}).get("unpushed",0) or 0
+        if u>0: up+=u
+        if down(prod.get(r,"")): downs.append(r)
+    return up,downs
+active=[(n,p) for n,p in pj.items() if p.get("phase") not in ("frozen","sunset")]
+active.sort(key=lambda kv:(mrank.get(kv[1].get("money"),9), 0 if kv[1].get("focus") else 1))
 print()
-print(col("  ▸ БЛИЖЕ ВСЕГО К ДЕНЬГАМ — на это смотреть сегодня","1;37"))
+print(col("  ▸ БЛИЖЕ ВСЕГО К ДЕНЬГАМ — проекты, на это смотреть","1;37"))
 shown=0
 for n,p in active:
     if p.get("money")=="none" and not p.get("focus"): continue
     mo=p.get("money","none"); ph_=p.get("phase")
     mc={"paying":"1;32","near":"1;33","users":"1;36"}.get(mo,"2")
     blk=(" · блокер: "+p["blocker"]) if p.get("blocker") else ""
-    ag=AG.get(ph_,"—")
-    print("  %s %s %s → %s%s"%(col("●" if p.get("focus") else "○","1;36"),col(n,"1;37"),col("[%s/%s]"%(ph_,mo),mc),col(ag,"1;33"),blk))
+    print("  %s %s %s → %s%s"%(col("●" if p.get("focus") else "○","1;36"),col(n,"1;37"),col("[%s/%s]"%(ph_,mo),mc),col(AG.get(ph_,"—"),"1;33"),blk))
     if p.get("next"): print("     next: %s   %s"%(p["next"],col("→ agentic act "+n,"2")))
     shown+=1
-if not shown: print("  "+col("нет проектов с деньгами/фокусом — проставь: agentic phase <repo> <phase> --money near --focus","2"))
-# burning: unpushed or prod-down (from live snapshot)
+if not shown: print("  "+col("проставь деньги/фокус: agentic project <name> --money near --focus","2"))
+# burning — aggregate unpushed / prod-down per project
 burn=[]
-for n,r in git.items():
-    if (r.get("unpushed") or 0)>0: burn.append((n,"↑%d unpushed"%r["unpushed"]))
-for n,c in prod.items():
-    if down(c): burn.append((n,"prod %s"%("DOWN" if c=="000" else c)))
+for n,p in pj.items():
+    up,downs=pgit(p)
+    if up>0: burn.append((n,"↑%d unpushed"%up))
+    for r in downs: burn.append((n,"prod down: %s"%r))
 if burn:
     print(); print(col("  ⚠ ГОРИТ","1;31"))
     for n,w in burn[:8]: print("  %s %s — %s"%(col("!","1;31"),n,w))
-# sunset ready
-kill=[n for n,p in ph.items() if p.get("phase")=="sunset"]
+# engineering — repos mid-pipeline (build/test/deploy) → dev-agent
+mid=[]
+for n,p in pj.items():
+    for r,st in p.get("repos",{}).items():
+        if st in ("build","test","deploy"): mid.append((r,st,n))
+if mid:
+    print(); print(col("  ⚙ В РАЗРАБОТКЕ (SDLC)","1;36"))
+    for r,st,n in mid[:8]: print("  %s %s %s %s"%(col("·","1;36"),r,col("["+st+"]","1;36"),col("→ agentic dev "+r,"2")))
+# sunset
+kill=[n for n,p in pj.items() if p.get("phase")=="sunset"]
 if kill:
-    print(); print(col("  ✗ НА СНОС (%d)"%len(kill),"2"))
+    print(); print(col("  ✗ НА СНОС (%d проектов)"%len(kill),"2"))
     print("  "+col(", ".join(kill[:20]),"2"))
-    print("  "+col("→ agentic act <repo> проверит влитость перед сносом","2"))
-# sprawl verdict
-nf=sum(1 for _,p in ph.items() if p.get("focus"))
-ship=sum(1 for _,p in ph.items() if p.get("phase")=="shipped")
+# sprawl
+nf=sum(1 for _,p in pj.items() if p.get("focus"))
+ship=sum(1 for _,p in pj.items() if p.get("phase")=="shipped")
 print()
 v="  "+col("фокус: %d проектов"%nf,"1;36" if nf<=7 else "1;31")
-if nf>7: v+=col("  ⚠ распыление — сократи","1;31")
-if ship: v+=" · "+col("%d в shipped без денег"%ship,"1;33")+col(" ← твоя ловушка","2")
+if nf>7: v+=col("  ⚠ распыление","1;31")
+if ship: v+=" · "+col("%d в shipped"%ship,"1;33")
 print(v)'
 }
 
-cmd_act() {
-  local repo="${1:-}" run=0
-  for a in "$@"; do [ "$a" = "--run" ] && run=1; done
-  [ -n "$repo" ] && [ "$repo" != "--run" ] || { bad "usage: agentic act <repo> [--run]"; return 1; }
-  [ -f "$PHASES_FILE" ] || { bad "no phases — run: agentic phase seed"; return 1; }
-  local phase path
-  phase="$(REPO="$repo" PHASES="$PHASES_FILE" python3 -c 'import os,json;d=json.load(open(os.environ["PHASES"],encoding="utf-8"));print((d.get(os.environ["REPO"]) or {}).get("phase",""))' 2>/dev/null)"
-  [ -n "$phase" ] || { bad "no phase for '$repo' — set one: agentic phase $repo <phase>"; return 1; }
-  path="$(REPO="$repo" REG="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}" python3 -c 'import os,json;d={r["name"]:r["path"] for r in json.load(open(os.environ["REG"],encoding="utf-8"))};print(d.get(os.environ["REPO"],""))' 2>/dev/null)"
-  local prompt
-  case "$phase" in
-    idea)     prompt="Validate market demand for the project '$repo'. Is there a paying audience and a real, urgent pain? Give a blunt go / no-go and why.";;
-    building) prompt="Project '$repo' at $path is in development. Review it and list the concrete gaps remaining before it can ship to a first real user. Be specific.";;
-    shipped)  prompt="Project '$repo' is deployed but has ZERO paying users. Draft a 2-week GTM plan, no code: 5 concrete outreach targets, a cold-email template, a demo script, and the exact path to the first paying customer.";;
-    live)     prompt="Project '$repo' has users but no revenue. How to turn users into payers: billing readiness, the activation moment, and the smallest paywall that could take money this week.";;
-    earning)  prompt="Project '$repo' has paying users. Give the top 3 growth/retention levers ranked by effort-to-impact.";;
-    frozen)   warn "'$repo' is frozen — no action by design (monitor only)."; return 0;;
-    sunset)   prompt="Project '$repo' at $path is marked for deletion. Verify its work is fully merged into its canonical repo: check local unpushed commits and uncommitted changes, compare against the likely target repo, and report SAFE-TO-DELETE or exactly what would be lost.";;
-    *) bad "unknown phase '$phase'"; return 1;;
-  esac
-  # enrich the prompt with the founder's own notes on this project (headless
-  # claude -p has no MCP/memory access, so the sub-agent would otherwise be blind)
+# memory context for a name (project or repo) — headless claude -p has no MCP,
+# so we hand it the founder's own notes so the sub-agent isn't blind.
+_enrich() {
   local mem="$HOME/.claude/projects/-Users-duchenchuk-Documents-ClaudeCode/memory"
-  local ctx=""
-  [ -f "$mem/MEMORY.md" ] && ctx="$(grep -iF "$repo" "$mem/MEMORY.md" 2>/dev/null | sed 's/^- //' | head -15)"
-  [ -n "$ctx" ] && prompt="Context on '$repo' from the founder's own notes — use it, do not ask what you can infer from it:
+  [ -f "$mem/MEMORY.md" ] && grep -iF "$1" "$mem/MEMORY.md" 2>/dev/null | sed 's/^- //' | head -15
+}
+# dispatch a sub-agent: label stage prompt run ctx
+_dispatch() {
+  local label="$1" stage="$2" prompt="$3" run="$4" ctx="$5"
+  [ -n "$ctx" ] && prompt="Context on '$label' from the founder's own notes — use it, do not ask what you can infer:
 $ctx
 
 $prompt"
-  say "act: $(c '1;37' "$repo") — phase $(c '1;33' "$phase") → sub-agent$([ -n "$ctx" ] && echo " (+context from memory)")"
+  say "$(c '1;37' "$label") — $(c '1;33' "$stage") → sub-agent$([ -n "$ctx" ] && echo ' (+context)')"
   echo "  $(c '1;36' 'prompt:') $prompt"
   if [ "$run" = 1 ]; then
     command -v claude >/dev/null || { bad "claude CLI not on PATH"; return 1; }
-    echo ""; say "running sub-agent (claude -p)…"; echo ""
-    claude -p "$prompt"
+    echo ""; say "running sub-agent (claude -p)…"; echo ""; claude -p "$prompt"
   else
-    echo ""; echo "  $(c '2' 'dry-run — add --run to dispatch the sub-agent via claude -p')"
+    echo ""; echo "  $(c '2' 'dry-run — add --run to dispatch via claude -p')"
   fi
+}
+
+# business agent on a PROJECT (money phase — we sell projects)
+cmd_act() {
+  local name="${1:-}" run=0
+  for a in "$@"; do [ "$a" = "--run" ] && run=1; done
+  [ -n "$name" ] && [ "$name" != "--run" ] || { bad "usage: agentic act <project> [--run]"; return 1; }
+  [ -f "$PROJECTS_FILE" ] || { bad "no projects — run: agentic project seed"; return 1; }
+  local phase
+  phase="$(NAME="$name" PROJ="$PROJECTS_FILE" python3 -c 'import os,json;d=json.load(open(os.environ["PROJ"],encoding="utf-8"));print((d.get(os.environ["NAME"]) or {}).get("phase",""))' 2>/dev/null)"
+  [ -n "$phase" ] || { bad "no project '$name' — see: agentic project show"; return 1; }
+  local prompt
+  case "$phase" in
+    idea)     prompt="Validate market demand for project '$name'. Is there a paying audience and a real, urgent pain? Give a blunt go / no-go.";;
+    building) prompt="Project '$name' is in development. List the concrete gaps remaining before it can ship to a first real user.";;
+    shipped)  prompt="Project '$name' is deployed but has ZERO paying users. Draft a 2-week GTM plan, no code: 5 concrete outreach targets, a cold-email template, a demo script, and the exact path to the first paying customer.";;
+    live)     prompt="Project '$name' has users but no revenue. How to turn users into payers: billing readiness, the activation moment, the smallest paywall to take money this week.";;
+    earning)  prompt="Project '$name' has paying users. Top 3 growth/retention levers ranked by effort-to-impact.";;
+    frozen)   warn "'$name' is frozen — no action by design (monitor only)."; return 0;;
+    sunset)   prompt="Project '$name' is marked for deletion. Verify its work is merged into its canonical repos before deleting; report SAFE-TO-DELETE or exactly what would be lost.";;
+    *) bad "unknown phase '$phase'"; return 1;;
+  esac
+  _dispatch "$name" "$phase" "$prompt" "$run" "$(_enrich "$name")"
+}
+
+# engineering agent on a REPO (SDLC stage — dev happens per repo)
+cmd_dev() {
+  local repo="${1:-}" run=0
+  for a in "$@"; do [ "$a" = "--run" ] && run=1; done
+  [ -n "$repo" ] && [ "$repo" != "--run" ] || { bad "usage: agentic dev <repo> [--run]"; return 1; }
+  [ -f "$PROJECTS_FILE" ] || { bad "no projects — run: agentic project seed"; return 1; }
+  local stage path
+  stage="$(REPO="$repo" PROJ="$PROJECTS_FILE" python3 -c 'import os,json
+d=json.load(open(os.environ["PROJ"],encoding="utf-8")); r=os.environ["REPO"]
+for pr,p in d.items():
+    if r in p.get("repos",{}):
+        print(p["repos"][r] or ""); break' 2>/dev/null)"
+  [ -n "$stage" ] || { bad "no SDLC stage for '$repo' — set: agentic sdlc $repo <stage>"; return 1; }
+  path="$(REPO="$repo" REG="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}" python3 -c 'import os,json;d={r["name"]:r["path"] for r in json.load(open(os.environ["REG"],encoding="utf-8"))};print(d.get(os.environ["REPO"],""))' 2>/dev/null)"
+  local prompt
+  case "$stage" in
+    design)   prompt="Repo '$repo' at $path is in DESIGN. Pressure-test the approach: architecture risks, simpler alternatives, what to decide before coding.";;
+    build)    prompt="Repo '$repo' at $path is in BUILD. Review the current code and list concrete gaps before it is test-ready. Cite files.";;
+    test)     prompt="Repo '$repo' at $path is in TEST. Identify coverage gaps and the highest-value tests to add before deploy.";;
+    deploy)   prompt="Repo '$repo' at $path is ready to DEPLOY. Produce a deploy-readiness checklist: migrations, env, rollback, health checks, known gotchas.";;
+    maintain) prompt="Repo '$repo' at $path is in MAINTAIN. Surface the top tech-debt and reliability risks, ranked by effort-to-impact.";;
+    *) bad "unknown stage '$stage'"; return 1;;
+  esac
+  _dispatch "$repo" "$stage" "$prompt" "$run" "$(_enrich "$repo")"
 }
 
 # ── project / sdlc — two-axis model ───────────────────────────────────────────
@@ -1280,7 +1325,8 @@ agentic — the Agentic Platform control plane
   agentic sdlc [<repo> <stage>]  engineering axis — per-repo stage (design|build|test|deploy|maintain)
   agentic phase [<repo> <phase>]  living roadmap — declare/show where each project is (7 phases)
   agentic brief            daily focus digest — ranked by money, what to push/kill, sprawl
-  agentic act <repo> [--run]  dispatch the phase-appropriate sub-agent (shipped→GTM, sunset→verify)
+  agentic act <project> [--run]  business sub-agent for a project's money phase (shipped→GTM)
+  agentic dev <repo> [--run]  engineering sub-agent for a repo's SDLC stage (build→review, deploy→checklist)
   agentic doctor           end-to-end readiness (routing + Claude's MCP path)
   agentic ask "question"   ask AgenticMind a question from the terminal
   agentic ingest <path>    add a file / a directory of .md,.txt into the knowledge base
@@ -1314,6 +1360,7 @@ case "${1:-}" in
   phase) shift 2>/dev/null || true; cmd_phase "$@" ;;
   brief) cmd_brief ;;
   act) shift; cmd_act "$@" ;;
+  dev) shift; cmd_dev "$@" ;;
   console) cmd_console ;; app) cmd_app ;; dockapp) cmd_dockapp ;; menubar) cmd_menubar ;;
   demo) cmd_demo ;; install) cmd_install ;;
   ask) shift; cmd_ask "$@" ;; ingest) shift; cmd_ingest "$@" ;;
