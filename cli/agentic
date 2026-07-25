@@ -1228,8 +1228,10 @@ print(line)'
 project_set() {
   local name="${1:-}"; shift 2>/dev/null || true
   [ -n "$name" ] || { bad "usage: agentic project <name> [--repos a,b,c] [--phase P] [--money M] [--focus|--nofocus] [--next ..] [--blocker ..]"; return 1; }
-  local repos="" phase="" money="" focus="" next="" blocker=""
+  local repos="" phase="" money="" focus="" next="" blocker="" addr="" del=0
   while [ $# -gt 0 ]; do case "$1" in
+    --delete) del=1; shift;;
+    --add-repos) addr="${2:-}"; shift 2;;
     --repos) repos="${2:-}"; shift 2;;
     --phase) phase="${2:-}"; shift 2;;
     --money) money="${2:-}"; shift 2;;
@@ -1241,16 +1243,22 @@ project_set() {
   esac; done
   [ -z "$phase" ] || _valid_phase "$phase" || { bad "bad phase '$phase'"; return 1; }
   [ -z "$money" ] || case "$money" in none|near|users|paying);; *) bad "money: none|near|users|paying"; return 1;; esac
-  NAME="$name" REPOS="$repos" PHASE="$phase" MONEY="$money" FOCUS="$focus" NEXT="$next" BLOCKER="$blocker" PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
+  NAME="$name" REPOS="$repos" ADDR="$addr" DEL="$del" PHASE="$phase" MONEY="$money" FOCUS="$focus" NEXT="$next" BLOCKER="$blocker" PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
 import os,json,datetime
 proj=os.environ["PROJ"]; cur={}
 if os.path.exists(proj):
     try: cur=json.load(open(proj,encoding="utf-8"))
     except Exception: cur={}
 e=os.environ; n=e["NAME"]
+if e.get("DEL")=="1":
+    cur.pop(n,None); json.dump(cur,open(proj,"w",encoding="utf-8"),ensure_ascii=False,indent=1); print("  deleted "+n); raise SystemExit
 r=cur.get(n,{"repos":{},"phase":"","money":"none","focus":False,"next":"","blocker":"","updated":""})
 if e.get("REPOS"):
     old=r.get("repos",{}); r["repos"]={x.strip():old.get(x.strip(),"") for x in e["REPOS"].split(",") if x.strip()}
+if e.get("ADDR"):
+    for x in e["ADDR"].split(","):
+        x=x.strip()
+        if x: r["repos"][x]=r["repos"].get(x,"")
 for k in ("PHASE","MONEY","NEXT","BLOCKER"):
     if e.get(k): r[k.lower()]=e[k]
 if e.get("FOCUS"): r["focus"]=(e["FOCUS"]=="true")
