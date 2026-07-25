@@ -426,10 +426,14 @@ async function tick(){
     $("board").innerHTML = PH.map(f=>{
       const items=(buckets[f]||[]).sort((a,b)=>(mrank[a[1].money]??9)-(mrank[b[1].money]??9))
       const trap = f==="shipped" && items.some(x=>x[1].money==="none")
-      const cards = items.map(([n,d])=>`<div class="pcard">
+      const cards = items.map(([n,d])=>{
+        const st={}; Object.values(d.repos||{}).forEach(s=>{ if(s) st[s]=(st[s]||0)+1 })
+        const mix=Object.entries(st).map(([k,v])=>k+'·'+v).join(' ')
+        return `<div class="pcard">
         <div class="nm">${d.focus?'<span style="color:var(--teal)">●</span>':''}${esc(n)}
           <span class="mo" style="background:${MB[d.money]||MB.none};color:${MC[d.money]||MC.none}">${esc(d.money||'none')}</span></div>
-        <div class="nx">${Object.keys(d.repos||{}).length} репо${d.next?' · '+esc(d.next):''}</div></div>`).join("") || '<div class="none">—</div>'
+        <div class="nx">${Object.keys(d.repos||{}).length} репо${mix?' · <span style="color:var(--teal)">'+esc(mix)+'</span>':''}${d.next?' · '+esc(d.next):''}</div></div>`
+      }).join("") || '<div class="none">—</div>'
       return `<div class="col${trap?' trap':''}"><h3>${f} <span class="n">${items.length}</span></h3>${cards}</div>`
     }).join("")
     const nf=Object.values(pj).filter(d=>d.focus).length

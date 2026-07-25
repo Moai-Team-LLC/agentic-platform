@@ -1184,8 +1184,9 @@ for r in d.get("repos",[]):
     if not r.get("gone"): a["gone"]=False
 added=0
 for pr,a in agg.items():
-    if pr in cur:  # keep declared project, just refresh repo membership from groups
-        for n in a["repos"]: cur[pr].setdefault("repos",{}).setdefault(n,"")
+    if pr in cur:  # keep declared project (phase/money/focus), but rebuild repo
+        old=cur[pr].get("repos",{})  # membership from the live snapshot (drops deleted repos, keeps sdlc)
+        cur[pr]["repos"]={n:old.get(n,"") for n in a["repos"]}
         continue
     if pr=="knowledge-junk": phase="sunset"
     elif a["gone"]: phase="sunset"
