@@ -110,6 +110,20 @@
   .answer{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px;
           font-size:12.5px;line-height:1.55;white-space:pre-wrap;max-height:200px;overflow:auto}
 
+  /* roadmap kanban */
+  .rmhead{display:flex;justify-content:space-between;align-items:center;margin:2px 2px 14px;flex-wrap:wrap;gap:8px}
+  .board{display:flex;gap:12px;overflow-x:auto;padding-bottom:10px}
+  .col{flex:0 0 210px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:9px}
+  .col.trap{border-color:#d9a44140;box-shadow:0 0 0 1px #d9a44120 inset}
+  .col h3{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:3px 6px 9px;
+          display:flex;justify-content:space-between;align-items:center;font-weight:600}
+  .col h3 .n{font-family:var(--mono);color:var(--dim);font-weight:500}
+  .pcard{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:9px 10px;margin-bottom:7px}
+  .pcard:last-child{margin-bottom:0}
+  .pcard .nm{font-weight:600;font-size:12.5px;display:flex;align-items:center;gap:6px;color:var(--ink)}
+  .pcard .mo{font-family:var(--mono);font-size:9.5px;padding:1px 5px;border-radius:4px;margin-left:auto;text-transform:uppercase}
+  .pcard .nx{font-size:11px;color:var(--mut);margin-top:5px;line-height:1.35;white-space:normal}
+  .col .none{color:var(--dim);font-size:12px;padding:6px}
   /* overview */
   .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:12px;margin:2px 0 20px}
   .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
@@ -143,6 +157,7 @@
 <nav class="tabs" id="tabs">
   <button class="tab active" data-pane="overview">Overview</button>
   <button class="tab" data-pane="portfolio">🗂️ Portfolio <span class="cnt" id="badgePortfolio"></span></button>
+  <button class="tab" data-pane="roadmap">🗺️ Roadmap</button>
   <button class="tab" data-pane="activity">Activity</button>
   <button class="tab" data-pane="security">Security <span class="cnt" id="badgeSecurity"></span></button>
   <button class="tab" data-pane="knowledge">Knowledge</button>
@@ -187,6 +202,15 @@
         </div>
       </div>
     </section>
+  </div>
+
+  <!-- ROADMAP: phases kanban -->
+  <div class="pane" id="pane-roadmap">
+    <div class="rmhead">
+      <span id="rmSummary" class="muted">loading…</span>
+      <span class="muted" style="font-size:11.5px">путь к деньгам → · <span style="color:var(--teal)">●</span> = в фокусе</span>
+    </div>
+    <div class="board" id="board"><div class="empty">no phases yet — run <span class="badge">agentic phase seed</span></div></div>
   </div>
 
   <!-- ACTIVITY: observability + cost -->
@@ -388,6 +412,30 @@ async function tick(){
       `<tr><td class="muted">${esc(r.url)}</td><td class="r">${httpc(r.code)}</td><td class="r muted">${esc(r.disk&&r.disk!=="-"?r.disk:"—")}</td></tr>`
     ).join("")
     $("portTag").textContent = p.at ? ("host · "+timeAgo(p.at)) : "host · git + prod"
+  }catch(e){}
+
+  // roadmap kanban (living phases — path to money left→right)
+  try{
+    const pj=(await (await fetch("/api/phases")).json()).projects||{}
+    const PH=["idea","building","shipped","live","earning","frozen","sunset"]
+    const MC={paying:"var(--up)",near:"var(--warn)",users:"var(--teal)",none:"var(--dim)"}
+    const MB={paying:"#3fb47f1a",near:"#d9a4411a",users:"#4991ad1a",none:"#ffffff0d"}
+    const buckets={}; PH.forEach(f=>buckets[f]=[])
+    Object.entries(pj).forEach(([n,d])=>{ (buckets[d.phase]||(buckets[d.phase]=[])).push([n,d]) })
+    const mrank={paying:0,near:1,users:2,none:3}
+    $("board").innerHTML = PH.map(f=>{
+      const items=(buckets[f]||[]).sort((a,b)=>(mrank[a[1].money]??9)-(mrank[b[1].money]??9))
+      const trap = f==="shipped" && items.some(x=>x[1].money==="none")
+      const cards = items.map(([n,d])=>`<div class="pcard">
+        <div class="nm">${d.focus?'<span style="color:var(--teal)">●</span>':''}${esc(n)}
+          <span class="mo" style="background:${MB[d.money]||MB.none};color:${MC[d.money]||MC.none}">${esc(d.money||'none')}</span></div>
+        ${d.next?`<div class="nx">${esc(d.next)}</div>`:''}</div>`).join("") || '<div class="none">—</div>'
+      return `<div class="col${trap?' trap':''}"><h3>${f} <span class="n">${items.length}</span></h3>${cards}</div>`
+    }).join("")
+    const nf=Object.values(pj).filter(d=>d.focus).length
+    const ship=Object.values(pj).filter(d=>d.phase==="shipped"&&d.money==="none").length
+    $("rmSummary").innerHTML=`<b style="color:var(--ink)">${Object.keys(pj).length}</b> проектов · <b style="color:${nf>7?'var(--down)':'var(--teal)'}">${nf}</b> в фокусе`
+      +(ship?` · <span style="color:var(--warn)">${ship} в shipped без денег</span>`:'')
   }catch(e){}
 
   // overview tiles + attention + tab badges

@@ -262,6 +262,7 @@ services:
       # dev-cockpit bridge: the host writes a portfolio snapshot here (agentic snapshot),
       # the console serves it as the Portfolio tab — cockpit fused into the one app.
       PORTFOLIO_FILE: /cockpit/snapshot.json
+      PHASES_FILE: /cockpit/phases.json
     volumes:
       - gateway-data:/gateway-data:ro
       - ../.run:/run-data:ro
