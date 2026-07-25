@@ -1315,6 +1315,87 @@ print("  %s → sdlc=%s (project %s)"%(repo,stage,found))' || { bad "repo '$repo
   ok "sdlc updated"
 }
 
+# ── check — per-repo readiness checklist ──────────────────────────────────────
+# Auto-detects most of it (docs/github/deployed/tests/ci/secrets/license) from
+# `git ls-files` + the snapshot — no manual upkeep. Manual-only items (tests
+# green, typecheck, monitoring) are marked ⏳ and run via `agentic dev`. Shows
+# only the items relevant to the repo's detected profile (product/oss/frontend/lib).
+cmd_check() {
+  local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
+  local snap="$HOME/.agentic-cockpit/snapshot.json"
+  [ -f "$reg" ] || { bad "no registry — run: agentic snapshot"; return 1; }
+  REPO="${1:-}" REG="$reg" SNAP="$snap" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json,subprocess,glob
+reg=json.load(open(os.environ["REG"],encoding="utf-8"))
+bp={r["name"]:r for r in reg}
+snap={}
+try: snap=json.load(open(os.environ["SNAP"],encoding="utf-8"))
+except Exception: pass
+gsnap={r.get("name",""):r for r in snap.get("repos",[])}
+prod={p.get("name",""):(p.get("code","") or "") for p in snap.get("prod",[])}
+def git(p,*a):
+    try: return subprocess.check_output(["git","-C",p,*a],stderr=subprocess.DEVNULL).decode("utf-8","replace").strip()
+    except Exception: return ""
+def C(s,c): return "\033[%sm%s\033[0m"%(c,s)
+MK={"ok":C("+","1;32"),"no":C("x","1;31"),"na":C("-","2"),"run":C("~","1;33")}
+def ls(p,*pats): return bool(git(p,"ls-files","--",*pats).strip())
+def hasdir(p,*d):
+    for x in d:
+        if os.path.isdir(os.path.join(p,x)): return True
+    return False
+def profile(p,name):
+    if prod.get(name,"") : return "product"
+    if ls(p,"LICENSE*","LICENCE*"): return "oss"
+    if (ls(p,"index.html","public/index.html","*.html")) and not ls(p,"go.mod"): return "frontend"
+    return "lib"
+def check(name):
+    r=bp.get(name)
+    if not r or not os.path.isdir(r.get("path","")): print("  "+C(name+": path gone","1;31")); return (0,0)
+    p=r["path"]; prof=profile(p,name); g=gsnap.get(name,{})
+    readme=ls(p,"README.md","README*","readme*")
+    docs="ok" if readme and (ls(p,"DESIGN*","ARCHITECTURE*","docs/**","docs/*") or hasdir(p,"docs")) else ("run" if readme else "no")
+    remote=bool(git(p,"remote")); up=g.get("unpushed",0) or 0; dirty=g.get("dirty",0) or 0
+    github="ok" if (remote and up==0 and dirty==0) else "no"
+    code=prod.get(name,""); deployed="ok" if code[:1] in ("2","3") else ("no" if code else "na")
+    tests="ok" if (ls(p,"*.test.*","*_test.go","*.spec.*") or hasdir(p,"test","tests","__tests__")) else "no"
+    ci="ok" if (ls(p,".github/workflows/*",".gitlab-ci.yml") or hasdir(p,".github/workflows")) else "no"
+    lic="ok" if ls(p,"LICENSE*","LICENCE*") else "no"
+    secrets="ok" if (bool(git(p,"check-ignore",".env")) and not ls(p,".env")) else "no"
+    envex="ok" if ls(p,".env.example","*/.env.example") else "no"
+    rows=[
+      ("documentation",docs,None),
+      ("github + synced",github,None),
+      ("deployed",deployed,("product","frontend")),
+      ("tests exist",tests,("product","oss","lib")),
+      ("tests green","run",("product","oss","lib")),
+      ("CI/CD pipeline",ci,None),
+      ("type/lint green","run",None),
+      ("no secrets in git",secrets,None),
+      (".env.example present",envex,("product","oss","frontend")),
+      ("monitoring/self-heal",("run" if deployed=="ok" else "na"),("product",)),
+      ("LICENSE + provenance",lic,("oss",)),
+    ]
+    vis=[(l,s) for l,s,a in rows if a is None or prof in a]
+    done=sum(1 for _,s in vis if s=="ok"); tot=sum(1 for _,s in vis if s in ("ok","no"))
+    return (done,tot,prof,vis)
+name=os.environ.get("REPO","")
+if name:
+    res=check(name)
+    if len(res)>2:
+        done,tot,prof,vis=res
+        print("\n  "+C(name,"1;37")+"  "+C("["+prof+"]","2")+"  "+C("%d/%d"%(done,tot),"1;32" if done==tot else "1;33"))
+        for l,s in vis: print("    %s %s"%(MK.get(s,s),l))
+else:
+    print("\n  "+C("%-30s %-10s %s"%("REPO","PROFILE","READINESS"),"1;37"))
+    for r in sorted(reg,key=lambda x:x["name"]):
+        res=check(r["name"])
+        if len(res)>2:
+            done,tot,prof,_=res
+            bar=C("%d/%d"%(done,tot),"1;32" if tot and done==tot else "1;33" if done>tot/2 else "1;31")
+            print("  %-30s %-10s %s"%(r["name"][:30],prof,bar))
+'
+}
+
 usage() {
   cat <<'USAGE'
 agentic — the Agentic Platform control plane
@@ -1333,6 +1414,7 @@ agentic — the Agentic Platform control plane
   agentic snapshot         write portfolio snapshot → console's Portfolio tab (fuses cockpit in)
   agentic project [<name> ...]  business unit — group repos into projects, set money phase
   agentic sdlc [<repo> <stage>]  engineering axis — per-repo stage (design|build|test|deploy|maintain)
+  agentic check [<repo>]   readiness checklist — docs/github/deploy/tests/CI/secrets, auto-detected
   agentic phase [<repo> <phase>]  living roadmap — declare/show where each project is (7 phases)
   agentic brief            daily focus digest — ranked by money, what to push/kill, sprawl
   agentic act <project> [--run]  business sub-agent for a project's money phase (shipped→GTM)
@@ -1367,6 +1449,7 @@ case "${1:-}" in
   snapshot) cmd_snapshot ;;
   project) shift 2>/dev/null || true; cmd_project "$@" ;;
   sdlc) shift 2>/dev/null || true; cmd_sdlc "$@" ;;
+  check) shift 2>/dev/null || true; cmd_check "$@" ;;
   phase) shift 2>/dev/null || true; cmd_phase "$@" ;;
   brief) cmd_brief ;;
   act) shift; cmd_act "$@" ;;
