@@ -1072,7 +1072,7 @@ _enrich() {
 }
 # dispatch a sub-agent: label stage prompt run ctx
 _dispatch() {
-  local label="$1" stage="$2" prompt="$3" run="$4" ctx="$5"
+  local label="$1" stage="$2" prompt="$3" run="$4" ctx="$5" cwd="${6:-}"
   [ -n "$ctx" ] && prompt="Context on '$label' from the founder's own notes — use it, do not ask what you can infer:
 $ctx
 
@@ -1081,7 +1081,8 @@ $prompt"
   echo "  $(c '1;36' 'prompt:') $prompt"
   if [ "$run" = 1 ]; then
     command -v claude >/dev/null || { bad "claude CLI not on PATH"; return 1; }
-    echo ""; say "running sub-agent (claude -p)…"; echo ""; claude -p "$prompt"
+    echo ""; say "running sub-agent (claude -p)$([ -n "$cwd" ] && echo " in $cwd — reads the real code")…"; echo ""
+    if [ -n "$cwd" ] && [ -d "$cwd" ]; then ( cd "$cwd" && claude -p "$prompt" ); else claude -p "$prompt"; fi
   else
     echo ""; echo "  $(c '2' 'dry-run — add --run to dispatch via claude -p')"
   fi
@@ -1133,7 +1134,7 @@ for pr,p in d.items():
     maintain) prompt="Repo '$repo' at $path is in MAINTAIN. Surface the top tech-debt and reliability risks, ranked by effort-to-impact.";;
     *) bad "unknown stage '$stage'"; return 1;;
   esac
-  _dispatch "$repo" "$stage" "$prompt" "$run" "$(_enrich "$repo")"
+  _dispatch "$repo" "$stage" "$prompt" "$run" "$(_enrich "$repo")" "$path"
 }
 
 # ── project / sdlc — two-axis model ───────────────────────────────────────────
