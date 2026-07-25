@@ -30,6 +30,7 @@ const ASSURANCE_DIR = process.env.ASSURANCE_DIR ?? ""
 const MANIFEST_SARIF = process.env.MANIFEST_SARIF ?? ""
 const PORTFOLIO_FILE = process.env.PORTFOLIO_FILE ?? "/cockpit/snapshot.json"
 const PHASES_FILE = process.env.PHASES_FILE ?? "/cockpit/phases.json"
+const PROJECTS_FILE = process.env.PROJECTS_FILE ?? "/cockpit/projects.json"
 
 const aplSql = new SQL(`postgresql://postgres:postgres@${APL_PG_HOST}:${APL_PG}/postgres`)
 const mindSql = new SQL(`postgresql://postgres:mysecretpassword@${MIND_PG_HOST}:${MIND_PG}/postgres`)
@@ -262,6 +263,17 @@ const phases = () => {
   }
 }
 
+// dev-cockpit projects: the two-axis model (business unit + repos with SDLC).
+// The Roadmap tab renders these as a kanban of projects across money phases.
+const projects = () => {
+  try {
+    if (!existsSync(PROJECTS_FILE)) return { projects: {}, note: "run `agentic project seed` on the host" }
+    return { projects: JSON.parse(readFileSync(PROJECTS_FILE, "utf8")) }
+  } catch {
+    return { projects: {}, error: "projects file unreadable" }
+  }
+}
+
 const json = (v: unknown) => new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } })
 
 Bun.serve({
@@ -286,6 +298,8 @@ Bun.serve({
         return json(portfolio())
       case "/api/phases":
         return json(phases())
+      case "/api/projects":
+        return json(projects())
       case "/api/overview": {
         const [h, t, m, fl] = await Promise.all([health(), traces(), memory(), fleet()])
         return json({

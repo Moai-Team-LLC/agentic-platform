@@ -416,7 +416,7 @@ async function tick(){
 
   // roadmap kanban (living phases — path to money left→right)
   try{
-    const pj=(await (await fetch("/api/phases")).json()).projects||{}
+    const pj=(await (await fetch("/api/projects")).json()).projects||{}
     const PH=["idea","building","shipped","live","earning","frozen","sunset"]
     const MC={paying:"var(--up)",near:"var(--warn)",users:"var(--teal)",none:"var(--dim)"}
     const MB={paying:"#3fb47f1a",near:"#d9a4411a",users:"#4991ad1a",none:"#ffffff0d"}
@@ -429,7 +429,7 @@ async function tick(){
       const cards = items.map(([n,d])=>`<div class="pcard">
         <div class="nm">${d.focus?'<span style="color:var(--teal)">●</span>':''}${esc(n)}
           <span class="mo" style="background:${MB[d.money]||MB.none};color:${MC[d.money]||MC.none}">${esc(d.money||'none')}</span></div>
-        ${d.next?`<div class="nx">${esc(d.next)}</div>`:''}</div>`).join("") || '<div class="none">—</div>'
+        <div class="nx">${Object.keys(d.repos||{}).length} репо${d.next?' · '+esc(d.next):''}</div></div>`).join("") || '<div class="none">—</div>'
       return `<div class="col${trap?' trap':''}"><h3>${f} <span class="n">${items.length}</span></h3>${cards}</div>`
     }).join("")
     const nf=Object.values(pj).filter(d=>d.focus).length
