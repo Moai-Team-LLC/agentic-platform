@@ -158,6 +158,7 @@
   <button class="tab active" data-pane="overview">Overview</button>
   <button class="tab" data-pane="portfolio">🗂️ Portfolio <span class="cnt" id="badgePortfolio"></span></button>
   <button class="tab" data-pane="roadmap">🗺️ Roadmap</button>
+  <button class="tab" data-pane="dev">⚙️ Dev <span class="cnt" id="badgeDev"></span></button>
   <button class="tab" data-pane="activity">Activity</button>
   <button class="tab" data-pane="security">Security <span class="cnt" id="badgeSecurity"></span></button>
   <button class="tab" data-pane="knowledge">Knowledge</button>
@@ -211,6 +212,24 @@
       <span class="muted" style="font-size:11.5px">путь к деньгам → · <span style="color:var(--teal)">●</span> = в фокусе</span>
     </div>
     <div class="board" id="board"><div class="empty">no phases yet — run <span class="badge">agentic phase seed</span></div></div>
+  </div>
+
+  <!-- DEV: SDLC kanban + readiness checklist per repo -->
+  <div class="pane" id="pane-dev">
+    <div class="rmhead">
+      <span id="devSummary" class="muted">loading…</span>
+      <span class="muted" style="font-size:11.5px">SDLC по репозиториям · readiness = авто-чеклист</span>
+    </div>
+    <div class="board" id="devBoard"><div class="empty">no projects yet — run <span class="badge">agentic project seed</span></div></div>
+    <section class="card" style="margin-top:16px">
+      <h2>✅ Readiness checklist <span class="tag">agentic check</span></h2>
+      <div class="body">
+        <div style="max-height:420px;overflow:auto">
+          <table><thead><tr><th>repo</th><th>profile</th><th class="r">score</th><th>gaps</th></tr></thead>
+          <tbody id="chkRows"><tr><td colspan="4" class="empty">run <span class="badge">agentic snapshot</span> to compute readiness</td></tr></tbody></table>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- ACTIVITY: observability + cost -->
@@ -440,6 +459,47 @@ async function tick(){
     const ship=Object.values(pj).filter(d=>d.phase==="shipped"&&d.money==="none").length
     $("rmSummary").innerHTML=`<b style="color:var(--ink)">${Object.keys(pj).length}</b> проектов · <b style="color:${nf>7?'var(--down)':'var(--teal)'}">${nf}</b> в фокусе`
       +(ship?` · <span style="color:var(--warn)">${ship} в shipped без денег</span>`:'')
+  }catch(e){}
+
+  // dev tab — SDLC kanban across repos + readiness checklist (from the host snapshot)
+  try{
+    const pjd=(await (await fetch("/api/projects")).json()).projects||{}
+    const ready=(p.readiness)||[]
+    const rmap={}; ready.forEach(r=>{ rmap[r.name]=r })
+    const ST=["design","build","test","deploy","maintain","(unset)"]
+    const bk={}; ST.forEach(s=>bk[s]=[])
+    Object.entries(pjd).forEach(([pn,d])=>Object.entries(d.repos||{}).forEach(([r,st])=>{
+      (bk[st&&bk[st]!==undefined?st:"(unset)"]).push([r,pn])
+    }))
+    const scoreHtml=(r)=>{
+      const c=rmap[r]; if(!c) return ""
+      const full=c.done===c.total
+      return `<span class="mo" style="background:${full?'#3fb47f1a':'#d9a4411a'};color:${full?'var(--up)':'var(--warn)'}">${c.done}/${c.total}</span>`
+    }
+    $("devBoard").innerHTML = ST.map(s=>{
+      const items=bk[s]||[]
+      if(s==="(unset)" && !items.length) return ""
+      const cards=items.map(([r,pn])=>`<div class="pcard">
+        <div class="nm">${esc(r)}${scoreHtml(r)}</div>
+        <div class="nx">${esc(pn)}</div></div>`).join("") || '<div class="none">—</div>'
+      const active = s==="build"||s==="test"||s==="deploy"
+      return `<div class="col${active&&items.length?' trap':''}"><h3>${s} <span class="n">${items.length}</span></h3>${cards}</div>`
+    }).join("")
+    const midN=(bk.build.length+bk.test.length+bk.deploy.length)
+    const unset=bk["(unset)"].length
+    $("devSummary").innerHTML=`<b style="color:var(--ink)">${ready.length||Object.values(pjd).reduce((a,d)=>a+Object.keys(d.repos||{}).length,0)}</b> репозиториев · <b style="color:var(--teal)">${midN}</b> в активной разработке`
+      +(unset?` · <span class="muted">${unset} без стадии</span>`:'')
+    $("badgeDev").textContent=midN||""
+    $("badgeDev").className="cnt"
+    // readiness table — worst first, gaps listed
+    const sorted=ready.slice().sort((a,b)=>(a.done/(a.total||1))-(b.done/(b.total||1)))
+    $("chkRows").innerHTML = sorted.map(c=>{
+      const gaps=(c.items||[]).filter(i=>i.status==="no").map(i=>i.label)
+      const full=c.done===c.total
+      return `<tr><td>${esc(c.name)}</td><td class="muted">${esc(c.profile)}</td>
+        <td class="r num" style="color:${full?'var(--up)':c.done>c.total/2?'var(--warn)':'var(--down)'}">${c.done}/${c.total}</td>
+        <td class="muted">${gaps.length?esc(gaps.join(", ")):'<span style="color:var(--up)">всё закрыто</span>'}</td></tr>`
+    }).join("") || `<tr><td colspan="4" class="empty">run <code>agentic snapshot</code> to compute readiness</td></tr>`
   }catch(e){}
 
   // overview tiles + attention + tab badges

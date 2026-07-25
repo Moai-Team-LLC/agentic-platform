@@ -245,7 +245,7 @@ const portfolio = () => {
   try {
     if (!existsSync(PORTFOLIO_FILE)) return { repos: [], prod: [], at: null, note: "run `agentic snapshot` on the host" }
     const d = JSON.parse(readFileSync(PORTFOLIO_FILE, "utf8"))
-    return { repos: d.repos ?? [], prod: d.prod ?? [], at: d.at ?? null }
+    return { repos: d.repos ?? [], prod: d.prod ?? [], readiness: d.readiness ?? [], at: d.at ?? null }
   } catch {
     return { repos: [], prod: [], at: null, error: "portfolio snapshot unreadable" }
   }

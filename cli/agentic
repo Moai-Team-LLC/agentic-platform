@@ -867,6 +867,15 @@ o={"repos":json.loads(os.environ.get("REPOS_JSON") or "[]"),
    "at":os.environ.get("AT")}
 open(os.environ["OUT"],"w",encoding="utf-8").write(json.dumps(o,ensure_ascii=False,indent=1))
 print("  repos:%d prod:%d"%(len(o["repos"]),len(o["prod"])))' || { bad "snapshot failed"; return 1; }
+  # readiness rides along so the console can show the checklist (it can't run git itself).
+  # Computed AFTER the file is written, so `check` sees the fresh prod codes.
+  local ready; ready="$(cmd_check --json 2>/dev/null)"
+  READY_JSON="$ready" OUT="$out" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json
+o=json.load(open(os.environ["OUT"],encoding="utf-8"))
+o["readiness"]=json.loads(os.environ.get("READY_JSON") or "[]")
+open(os.environ["OUT"],"w",encoding="utf-8").write(json.dumps(o,ensure_ascii=False,indent=1))
+print("  readiness: %d repos checked"%len(o["readiness"]))' 2>/dev/null || warn "readiness skipped"
   ok "snapshot → $(c '1;4;36' "$out") — console serves it as the Portfolio tab"
 }
 
@@ -1324,7 +1333,9 @@ cmd_check() {
   local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
   local snap="$HOME/.agentic-cockpit/snapshot.json"
   [ -f "$reg" ] || { bad "no registry — run: agentic snapshot"; return 1; }
-  REPO="${1:-}" REG="$reg" SNAP="$snap" PYTHONIOENCODING=utf-8 python3 -c '
+  local target="" mode=table
+  for a in "$@"; do case "$a" in --json) mode=json;; *) [ -z "$target" ] && target="$a";; esac; done
+  REPO="$target" MODE="$mode" REG="$reg" SNAP="$snap" PYTHONIOENCODING=utf-8 python3 -c '
 import os,json,subprocess,glob
 reg=json.load(open(os.environ["REG"],encoding="utf-8"))
 bp={r["name"]:r for r in reg}
@@ -1361,7 +1372,8 @@ def check(name):
     ci="ok" if (ls(p,".github/workflows/*",".gitlab-ci.yml") or hasdir(p,".github/workflows")) else "no"
     lic="ok" if ls(p,"LICENSE*","LICENCE*") else "no"
     secrets="ok" if (bool(git(p,"check-ignore",".env")) and not ls(p,".env")) else "no"
-    envex="ok" if ls(p,".env.example","*/.env.example") else "no"
+    # env templates live under many names/depths (integration/platform.env.example, .env.sample…)
+    envex="ok" if ls(p,"*env.example","*env.example*","*.env.sample","*env.template","*env.dist") else "no"
     rows=[
       ("documentation",docs,None),
       ("github + synced",github,None),
@@ -1379,6 +1391,16 @@ def check(name):
     done=sum(1 for _,s in vis if s=="ok"); tot=sum(1 for _,s in vis if s in ("ok","no"))
     return (done,tot,prof,vis)
 name=os.environ.get("REPO","")
+if os.environ.get("MODE")=="json":
+    out=[]
+    names=[name] if name else [r["name"] for r in reg]
+    for nm in names:
+        res=check(nm)
+        if len(res)>2:
+            done,tot,prof,vis=res
+            out.append({"name":nm,"profile":prof,"done":done,"total":tot,
+                        "items":[{"label":l,"status":s} for l,s in vis]})
+    print(json.dumps(out,ensure_ascii=False,indent=1)); raise SystemExit
 if name:
     res=check(name)
     if len(res)>2:
