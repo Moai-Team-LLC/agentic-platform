@@ -1071,7 +1071,16 @@ cmd_act() {
     sunset)   prompt="Project '$repo' at $path is marked for deletion. Verify its work is fully merged into its canonical repo: check local unpushed commits and uncommitted changes, compare against the likely target repo, and report SAFE-TO-DELETE or exactly what would be lost.";;
     *) bad "unknown phase '$phase'"; return 1;;
   esac
-  say "act: $(c '1;37' "$repo") — phase $(c '1;33' "$phase") → sub-agent"
+  # enrich the prompt with the founder's own notes on this project (headless
+  # claude -p has no MCP/memory access, so the sub-agent would otherwise be blind)
+  local mem="$HOME/.claude/projects/-Users-duchenchuk-Documents-ClaudeCode/memory"
+  local ctx=""
+  [ -f "$mem/MEMORY.md" ] && ctx="$(grep -iF "$repo" "$mem/MEMORY.md" 2>/dev/null | sed 's/^- //' | head -15)"
+  [ -n "$ctx" ] && prompt="Context on '$repo' from the founder's own notes — use it, do not ask what you can infer from it:
+$ctx
+
+$prompt"
+  say "act: $(c '1;37' "$repo") — phase $(c '1;33' "$phase") → sub-agent$([ -n "$ctx" ] && echo " (+context from memory)")"
   echo "  $(c '1;36' 'prompt:') $prompt"
   if [ "$run" = 1 ]; then
     command -v claude >/dev/null || { bad "claude CLI not on PATH"; return 1; }
@@ -1080,6 +1089,175 @@ cmd_act() {
   else
     echo ""; echo "  $(c '2' 'dry-run — add --run to dispatch the sub-agent via claude -p')"
   fi
+}
+
+# ── project / sdlc — two-axis model ───────────────────────────────────────────
+# A PROJECT is the business unit (we sell projects, not repos): it carries the
+# money phase. It groups one or more REPOS, each with its own SDLC stage (the
+# engineering axis — dev happens per repo). projects.json holds both.
+PROJECTS_FILE="${AGENTIC_PROJECTS:-$HOME/.agentic-cockpit/projects.json}"
+_valid_sdlc() { case "$1" in design|build|test|deploy|maintain) return 0;; *) return 1;; esac; }
+
+project_seed() {
+  local snap="$HOME/.agentic-cockpit/snapshot.json"
+  [ -f "$snap" ] || { bad "no snapshot — run: agentic snapshot"; return 1; }
+  PROJ="$PROJECTS_FILE" SNAP="$snap" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json,datetime
+proj,snap=os.environ["PROJ"],os.environ["SNAP"]
+d=json.load(open(snap,encoding="utf-8"))
+prod={p.get("name",""):(p.get("code","") or "") for p in d.get("prod",[])}
+ok=lambda c: c[:1] in ("2","3")
+# explicit multi-repo groupings (edit later with: agentic project <name> --repos ...)
+GROUPS={
+ "moai":["moai-next","moai-team-cms","moai-cms-front","moai-ads","moai-dot-github"],
+ "unlock":["Unlock","unlock-landing","unlock-cms","unlock-cms-front"],
+ "fcy":["fcy-app-dev","fcy-app-rnd","fcy-knowledge-ts"],
+ "founders-impact":["founders-impact-os","donate-founders-cy"],
+ "playerpulse":["player-pulse-backend","player-pulse-frontend"],
+ "social-graph":["Social Graph Drizzle","Social Graph Fork"],
+ "knowledge-junk":["Knowledge AI Drizzle","Marketplace Drizzle","Knowledge Layer Local","MyKnowledgeLayer","qust-source","PAI"],
+ "agentic-platform":["agentic-platform","AgenticMind","AgenticMind-stack","AgenticGateway","AgenticGateway-stack","AgenticOps","AgenticOps-stack","AgenticPerformance-stack","AgenticAssurance","agent-assurance","AgenticSelfHealingCode-stack","Self-healing code","apl","aal-evidence","agentic-product-standard","agentic-product-standard-stack","apg-std-org","agenticmind-org","ashc"],
+}
+r2p={}
+for pr,rs in GROUPS.items():
+    for r in rs: r2p[r]=pr
+cur={}
+if os.path.exists(proj):
+    try: cur=json.load(open(proj,encoding="utf-8"))
+    except Exception: cur={}
+today=datetime.date.today().isoformat()
+# build project -> {repos, freshest age, any prod}
+agg={}
+for r in d.get("repos",[]):
+    n=r.get("name","")
+    if not n: continue
+    pr=r2p.get(n,n)
+    a=agg.setdefault(pr,{"repos":[],"age":999,"prod":False,"gone":True})
+    a["repos"].append(n)
+    a["age"]=min(a["age"], r.get("age_days") or 999)
+    if ok(prod.get(n,"")): a["prod"]=True
+    if not r.get("gone"): a["gone"]=False
+added=0
+for pr,a in agg.items():
+    if pr in cur:  # keep declared project, just refresh repo membership from groups
+        for n in a["repos"]: cur[pr].setdefault("repos",{}).setdefault(n,"")
+        continue
+    if pr=="knowledge-junk": phase="sunset"
+    elif a["gone"]: phase="sunset"
+    elif a["prod"]: phase="shipped" if a["age"]<30 else "frozen"
+    elif a["age"]<21: phase="building"
+    else: phase="frozen"
+    cur[pr]={"repos":{n:"" for n in a["repos"]},"phase":phase,"money":"none","focus":False,"next":"","blocker":"","updated":today}
+    added+=1
+json.dump(cur,open(proj,"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+print("  grouped %d repos → %d projects (%d new). Fix membership: agentic project <name> --repos a,b,c"%(len(d.get("repos",[])),len(cur),added))'
+  ok "projects → $(c '1;4;36' "$PROJECTS_FILE")"
+}
+
+project_show() {
+  [ -f "$PROJECTS_FILE" ] || { warn "no projects yet — run: agentic project seed"; return 0; }
+  PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json
+d=json.load(open(os.environ["PROJ"],encoding="utf-8"))
+order={"earning":0,"live":1,"shipped":2,"building":3,"idea":4,"frozen":5,"sunset":6}
+mrank={"paying":0,"near":1,"users":2,"none":3}
+def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
+PC={"earning":"1;32","live":"1;36","shipped":"1;33","building":"2","idea":"2","frozen":"2","sunset":"1;31"}
+MC={"paying":"1;32","near":"1;33","users":"1;36","none":"2"}
+rows=sorted(d.items(),key=lambda kv:(order.get(kv[1].get("phase"),9),mrank.get(kv[1].get("money"),9)))
+print()
+print("  "+col("%-20s %-9s %-7s %-6s %-5s %s"%("PROJECT","PHASE","MONEY","FOCUS","REPOS","NEXT"),"1;37"))
+for n,p in rows:
+    ph=p.get("phase","?"); mo=p.get("money","none"); nr=len(p.get("repos",{}))
+    foc=col("●","1;36") if p.get("focus") else col("·","2")
+    print("  %-20s %s %s %-6s %-5s %s"%(n,col("%-9s"%ph,PC.get(ph,"0")),col("%-7s"%mo,MC.get(mo,"0")),foc,nr,col((p.get("next") or "")[:44],"2")))
+nf=sum(1 for _,p in rows if p.get("focus"))
+ship=sum(1 for _,p in rows if p.get("phase")=="shipped")
+print()
+line="  "+col("%d projects"%len(rows),"1;36")+" (было 57 репо) · "+col("%d in focus"%nf,"1;36" if nf<=7 else "1;31")
+if ship: line+=" · "+col("%d shipped"%ship,"1;33")
+print(line)'
+}
+
+project_set() {
+  local name="${1:-}"; shift 2>/dev/null || true
+  [ -n "$name" ] || { bad "usage: agentic project <name> [--repos a,b,c] [--phase P] [--money M] [--focus|--nofocus] [--next ..] [--blocker ..]"; return 1; }
+  local repos="" phase="" money="" focus="" next="" blocker=""
+  while [ $# -gt 0 ]; do case "$1" in
+    --repos) repos="${2:-}"; shift 2;;
+    --phase) phase="${2:-}"; shift 2;;
+    --money) money="${2:-}"; shift 2;;
+    --focus) focus="true"; shift;;
+    --nofocus) focus="false"; shift;;
+    --next) next="${2:-}"; shift 2;;
+    --blocker) blocker="${2:-}"; shift 2;;
+    *) shift;;
+  esac; done
+  [ -z "$phase" ] || _valid_phase "$phase" || { bad "bad phase '$phase'"; return 1; }
+  [ -z "$money" ] || case "$money" in none|near|users|paying);; *) bad "money: none|near|users|paying"; return 1;; esac
+  NAME="$name" REPOS="$repos" PHASE="$phase" MONEY="$money" FOCUS="$focus" NEXT="$next" BLOCKER="$blocker" PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json,datetime
+proj=os.environ["PROJ"]; cur={}
+if os.path.exists(proj):
+    try: cur=json.load(open(proj,encoding="utf-8"))
+    except Exception: cur={}
+e=os.environ; n=e["NAME"]
+r=cur.get(n,{"repos":{},"phase":"","money":"none","focus":False,"next":"","blocker":"","updated":""})
+if e.get("REPOS"):
+    old=r.get("repos",{}); r["repos"]={x.strip():old.get(x.strip(),"") for x in e["REPOS"].split(",") if x.strip()}
+for k in ("PHASE","MONEY","NEXT","BLOCKER"):
+    if e.get(k): r[k.lower()]=e[k]
+if e.get("FOCUS"): r["focus"]=(e["FOCUS"]=="true")
+r["updated"]=datetime.date.today().isoformat()
+cur[n]=r
+json.dump(cur,open(proj,"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+print("  %s → phase=%s money=%s focus=%s repos=%d"%(n,r["phase"],r["money"],r["focus"],len(r["repos"])))'
+  ok "project updated"
+}
+
+cmd_project() {
+  case "${1:-show}" in
+    seed) project_seed;;
+    show) project_show;;
+    *) project_set "$@";;
+  esac
+}
+
+cmd_sdlc() {
+  [ -f "$PROJECTS_FILE" ] || { bad "no projects — run: agentic project seed"; return 1; }
+  if [ -z "${1:-}" ] || [ "$1" = "show" ]; then
+    PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json
+d=json.load(open(os.environ["PROJ"],encoding="utf-8"))
+def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
+STAGES=["design","build","test","deploy","maintain","(unset)"]
+buck={s:[] for s in STAGES}
+for pr,p in d.items():
+    for r,st in p.get("repos",{}).items():
+        buck[st if st in STAGES else "(unset)"].append((r,pr))
+print()
+for s in STAGES:
+    items=buck[s]
+    if not items and s=="(unset)": continue
+    print("  "+col("%-9s"%s,"1;37" if s!="(unset)" else "2")+col(" %d"%len(items),"2"))
+    for r,pr in items[:40]: print("     %s %s"%(r,col("· "+pr,"2")))'
+    return
+  fi
+  # set: agentic sdlc <repo> <stage>
+  local repo="$1" stage="${2:-}"
+  [ -n "$stage" ] || { bad "usage: agentic sdlc <repo> <stage>  (design|build|test|deploy|maintain)"; return 1; }
+  _valid_sdlc "$stage" || { bad "stage: design|build|test|deploy|maintain"; return 1; }
+  REPO="$repo" STAGE="$stage" PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json
+proj=os.environ["PROJ"]; d=json.load(open(proj,encoding="utf-8"))
+repo=os.environ["REPO"]; stage=os.environ["STAGE"]; found=None
+for pr,p in d.items():
+    if repo in p.get("repos",{}): found=pr; p["repos"][repo]=stage; break
+if not found:
+    import sys; sys.stderr.write("repo not in any project — check: agentic project show\n"); sys.exit(3)
+json.dump(d,open(proj,"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+print("  %s → sdlc=%s (project %s)"%(repo,stage,found))' || { bad "repo '$repo' not found in any project"; return 1; }
+  ok "sdlc updated"
 }
 
 usage() {
@@ -1098,6 +1276,8 @@ agentic — the Agentic Platform control plane
   agentic cockpit          render + open the HTML portfolio panel (git + prod, host-native)
   agentic model <path> [--check]  living structural model of a repo + drift check (experimental)
   agentic snapshot         write portfolio snapshot → console's Portfolio tab (fuses cockpit in)
+  agentic project [<name> ...]  business unit — group repos into projects, set money phase
+  agentic sdlc [<repo> <stage>]  engineering axis — per-repo stage (design|build|test|deploy|maintain)
   agentic phase [<repo> <phase>]  living roadmap — declare/show where each project is (7 phases)
   agentic brief            daily focus digest — ranked by money, what to push/kill, sprawl
   agentic act <repo> [--run]  dispatch the phase-appropriate sub-agent (shipped→GTM, sunset→verify)
@@ -1129,6 +1309,8 @@ case "${1:-}" in
   cockpit|panel) cmd_cockpit ;;
   model) shift; cmd_model "$@" ;;
   snapshot) cmd_snapshot ;;
+  project) shift 2>/dev/null || true; cmd_project "$@" ;;
+  sdlc) shift 2>/dev/null || true; cmd_sdlc "$@" ;;
   phase) shift 2>/dev/null || true; cmd_phase "$@" ;;
   brief) cmd_brief ;;
   act) shift; cmd_act "$@" ;;
