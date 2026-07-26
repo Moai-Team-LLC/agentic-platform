@@ -1346,6 +1346,129 @@ print("  %s → sdlc=%s (project %s)"%(repo,stage,found))' || { bad "repo '$repo
   ok "sdlc updated"
 }
 
+# ── dedupe — collapse duplicate CHECKOUTS of one repo in the registry ─────────
+# The registry indexes FOLDERS, but a repo's identity is its git remote: the same
+# repo checked out 4× shows up as 4 entries, and anything per-repo (sdlc stage,
+# prod_url, deploy_cmd) then drifts per folder. That is not theoretical — two
+# checkouts of AgenticPerformance drifted onto different branches.
+#
+# Folders on disk are NEVER touched (an un-pushed branch may live in a mirror);
+# this only collapses the REGISTRY, and keeps projects.json in sync so no project
+# is left pointing at a name that no longer exists.
+cmd_dedupe() {
+  local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
+  [ -f "$reg" ] || { bad "no registry — run: agentic snapshot"; return 1; }
+  local apply=0
+  for a in "$@"; do [ "$a" = "--apply" ] && apply=1; done
+  if [ "$apply" = 1 ]; then
+    local ts dir; ts="$(date +%Y%m%d-%H%M%S)"; dir="$BACKUP_DIR/registry-$ts"; mkdir -p "$dir"
+    cp "$reg" "$dir/repos.json" 2>/dev/null
+    [ -f "$PROJECTS_FILE" ] && cp "$PROJECTS_FILE" "$dir/projects.json" 2>/dev/null
+    say "backup → $dir"
+  fi
+  APPLY="$apply" REG="$reg" PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json,subprocess,collections
+def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
+reg=json.load(open(os.environ["REG"],encoding="utf-8"))
+apply=os.environ["APPLY"]=="1"
+projp=os.environ["PROJ"]
+proj={}
+try: proj=json.load(open(projp,encoding="utf-8"))
+except Exception: pass
+
+def git(p,*a):
+    try: return subprocess.check_output(["git","-C",p]+list(a),stderr=subprocess.DEVNULL).decode("utf-8","replace").strip()
+    except Exception: return ""
+def norm(u):
+    u=u.strip().replace("git@github.com:","https://github.com/")
+    if u.endswith(".git"): u=u[:-4]
+    return u.rstrip("/").lower()
+
+# group registry entries by remote identity; entries with no remote stay as-is
+groups=collections.OrderedDict(); solo=[]
+for r in reg:
+    u=norm(git(r.get("path",""),"remote","get-url","origin"))
+    if not u: solo.append(r); continue
+    groups.setdefault(u,[]).append(r)
+
+def score(r):
+    """Lower is better. Never canonicalise a stale checkout."""
+    p=r.get("path","")
+    br=git(p,"rev-parse","--abbrev-ref","HEAD")
+    head=git(p,"rev-parse","HEAD"); orig=git(p,"rev-parse","origin/"+br) if br else ""
+    on_default = 0 if br in ("main","master") else 1
+    behind     = 0 if (head and orig and head==orig) else 1
+    in_stack   = 0 if "/agentic-stack/" in p else 1
+    when=git(p,"log","-1","--format=%ct") or "0"
+    return (behind, on_default, in_stack, -int(when), len(p))
+
+def why(r):
+    p=r.get("path","")
+    br=git(p,"rev-parse","--abbrev-ref","HEAD")
+    head=git(p,"rev-parse","HEAD"); orig=git(p,"rev-parse","origin/"+br) if br else ""
+    bits=[]
+    bits.append(br or "?")
+    bits.append("in-sync" if (head and orig and head==orig) else "behind/ahead")
+    if "/agentic-stack/" in p: bits.append("stack")
+    return ", ".join(bits)
+
+dups={u:v for u,v in groups.items() if len(v)>1}
+if not dups:
+    print(); print("  "+col("no duplicate checkouts — registry is already 1 entry per repo","1;32")); raise SystemExit
+drop=[]; merged_fields=0; carried=[]; stranded=[]
+print()
+print("  "+col("%d remote(s) with duplicate checkouts"%len(dups),"1;37"))
+for u,items in dups.items():
+    items=sorted(items,key=score)
+    keep=items[0]; mirrors=items[1:]
+    print()
+    print("  "+col(u.split("github.com/")[-1],"1;36"))
+    print("     "+col("keep","1;32")+"   %-30s %s"%(keep["name"],col("("+why(keep)+")","2")))
+    for m in mirrors:
+        # never lose metadata: fill EMPTY canonical fields from the mirror
+        filled=[]
+        for k,v in m.items():
+            if k in ("name","path"): continue
+            if v and not keep.get(k):
+                keep[k]=v; filled.append(k); merged_fields+=1
+        note=col("("+why(m)+")","2")
+        if filled: note+=col("  → carries %s"%",".join(filled),"1;33")
+        print("     "+col("drop","1;31")+"   %-30s %s"%(m["name"],note))
+        drop.append(m["name"])
+
+# projects.json: drop mirror names, carrying a set sdlc stage over to the canonical
+canon_of={}
+for u,items in dups.items():
+    items=sorted(items,key=score)
+    for m in items[1:]: canon_of[m["name"]]=items[0]["name"]
+if proj:
+    for pr,p in proj.items():
+        repos=p.get("repos") or {}
+        for name in list(repos.keys()):
+            c=canon_of.get(name)
+            if not c: continue
+            stage=repos.pop(name)
+            if not stage: continue
+            if c in repos:
+                if not repos.get(c): repos[c]=stage; carried.append("%s→%s"%(name,c))
+            else:
+                # the canonical lives in ANOTHER project — never drop a set stage silently
+                stranded.append("%s (%s, stage=%s) → canonical %s is in another project"%(name,pr,stage,c))
+
+print()
+print("  "+col("registry: %d → %d entries"%(len(reg),len(reg)-len(drop)),"1;37")+col("  (%d folders stay on disk, untouched)"%len(drop),"2"))
+if merged_fields: print("  "+col("carried %d metadata field(s) from mirrors to canonical"%merged_fields,"1;33"))
+if carried: print("  "+col("carried sdlc stage: %s"%", ".join(carried),"1;33"))
+for s in stranded: print("  "+col("! stage NOT carried: "+s,"1;31"))
+if not apply:
+    print(); print("  "+col("dry-run — add --apply to write it","2")); raise SystemExit
+keepnames=set(r["name"] for r in reg if r["name"] not in set(drop))
+out=[r for r in reg if r["name"] in keepnames]
+json.dump(out,open(os.environ["REG"],"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+if proj: json.dump(proj,open(projp,"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+print(); print("  "+col("written","1;32"))'
+}
+
 # ── check — per-repo readiness checklist ──────────────────────────────────────
 # Auto-detects most of it (docs/github/deployed/tests/ci/secrets/license) from
 # `git ls-files` + the snapshot — no manual upkeep. Manual-only items (tests
@@ -1476,6 +1599,7 @@ agentic — the Agentic Platform control plane
   agentic project [<name> ...]  business unit — group repos into projects, set money phase
   agentic sdlc [<repo> <stage>]  engineering axis — per-repo stage (design|build|test|deploy|maintain)
   agentic check [<repo>]   readiness checklist — docs/github/deploy/tests/CI/secrets, auto-detected
+  agentic dedupe [--apply]  collapse duplicate CHECKOUTS of one repo in the registry (folders untouched)
   agentic phase [<repo> <phase>]  living roadmap — declare/show where each project is (7 phases)
   agentic brief            daily focus digest — ranked by money, what to push/kill, sprawl
   agentic act <project> [--run]  business sub-agent for a project's money phase (shipped→GTM)
@@ -1510,6 +1634,7 @@ case "${1:-}" in
   snapshot) cmd_snapshot ;;
   project) shift 2>/dev/null || true; cmd_project "$@" ;;
   sdlc) shift 2>/dev/null || true; cmd_sdlc "$@" ;;
+  dedupe) shift 2>/dev/null || true; cmd_dedupe "$@" ;;
   check) shift 2>/dev/null || true; cmd_check "$@" ;;
   phase) shift 2>/dev/null || true; cmd_phase "$@" ;;
   brief) cmd_brief ;;
