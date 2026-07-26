@@ -1403,9 +1403,13 @@ def check(name):
     lic="ok" if ls(p,"LICENSE*","LICENCE*","COPYING*") else "no"
     # P0: the old check looked at ONE file (.env) and called everything else clean —
     # a committed id_rsa / *.pem / credentials.json read as "no secrets in git".
-    leaked=ls(p,".env",".env.*","*.pem","*.key","*.pfx","*.p12","*.jks","*.keystore",
-              "id_rsa","id_dsa","id_ed25519","*_rsa","*credentials*.json",
-              "*serviceAccount*.json","*service-account*.json","*.kdbx","*.ovpn")
+    cand=git(p,"ls-files","--",".env",".env.*","*.pem","*.key","*.pfx","*.p12","*.jks","*.keystore",
+             "id_rsa","id_dsa","id_ed25519","*_rsa","*credentials*.json",
+             "*serviceAccount*.json","*service-account*.json","*.kdbx","*.ovpn").split("\n")
+    # templates are NOT secrets — .env.example/.env.sample/.env.docker.example are
+    # exactly what we ask repos to commit, so they must never trip this check
+    tmpl=("example","sample","template","dist",".enc")
+    leaked=[f for f in cand if f.strip() and not any(t in f.lower() for t in tmpl)]
     secrets="no" if leaked else "ok"
     # env templates live under many names/depths (integration/platform.env.example, .env.sample…)
     envex="ok" if ls(p,"*env.example","*env.example*","*.env.sample","*env.template","*env.dist") else "no"
