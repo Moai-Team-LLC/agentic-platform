@@ -1372,14 +1372,22 @@ def git(p,*a):
 def C(s,c): return "\033[%sm%s\033[0m"%(c,s)
 MK={"ok":C("+","1;32"),"no":C("x","1;31"),"na":C("-","2"),"run":C("~","1;33")}
 def ls(p,*pats): return bool(git(p,"ls-files","--",*pats).strip())
+# tracked-only: an untracked local dir (docs/, .github/) must NOT read as done —
+# GitHub cannot see it. os.path.isdir() here produced false "ok"s (audit P0).
 def hasdir(p,*d):
     for x in d:
-        if os.path.isdir(os.path.join(p,x)): return True
+        if git(p,"ls-files","--",x.rstrip("/")+"/").strip(): return True
     return False
 def profile(p,name):
-    if prod.get(name,"") : return "product"
+    r=bp.get(name) or {}
+    # a repo declared with a prod URL stays "product" even if the ping failed or
+    # the snapshot is stale — otherwise the deploy row silently disappears (P1)
+    if prod.get(name,"") or (r.get("prod_url") or "").strip(): return "product"
     if ls(p,"LICENSE*","LICENCE*"): return "oss"
-    if (ls(p,"index.html","public/index.html","*.html")) and not ls(p,"go.mod"): return "frontend"
+    # browser extensions ship options.html/popup.html + manifest.json — that is
+    # not a web frontend, and calling it one hides their real test suites (P1)
+    if ls(p,"index.html","public/index.html","src/index.html","app/index.html") \
+       and not ls(p,"go.mod") and not ls(p,"manifest.json","*/manifest.json","*/*/manifest.json"): return "frontend"
     return "lib"
 def check(name):
     r=bp.get(name)
@@ -1390,10 +1398,15 @@ def check(name):
     remote=bool(git(p,"remote")); up=g.get("unpushed",0) or 0; dirty=g.get("dirty",0) or 0
     github="ok" if (remote and up==0 and dirty==0) else "no"
     code=prod.get(name,""); deployed="ok" if code[:1] in ("2","3") else ("no" if code else "na")
-    tests="ok" if (ls(p,"*.test.*","*_test.go","*.spec.*") or hasdir(p,"test","tests","__tests__")) else "no"
-    ci="ok" if (ls(p,".github/workflows/*",".gitlab-ci.yml") or hasdir(p,".github/workflows")) else "no"
-    lic="ok" if ls(p,"LICENSE*","LICENCE*") else "no"
-    secrets="ok" if (bool(git(p,"check-ignore",".env")) and not ls(p,".env")) else "no"
+    tests="ok" if (ls(p,"*.test.*","*_test.go","*.spec.*","test_*.py","*_test.py","*.rs") or hasdir(p,"test","tests","__tests__","e2e")) else "no"
+    ci="ok" if ls(p,".github/workflows/*",".gitlab-ci.yml","Jenkinsfile",".circleci/config.yml",".drone.yml","azure-pipelines.yml") else "no"
+    lic="ok" if ls(p,"LICENSE*","LICENCE*","COPYING*") else "no"
+    # P0: the old check looked at ONE file (.env) and called everything else clean —
+    # a committed id_rsa / *.pem / credentials.json read as "no secrets in git".
+    leaked=ls(p,".env",".env.*","*.pem","*.key","*.pfx","*.p12","*.jks","*.keystore",
+              "id_rsa","id_dsa","id_ed25519","*_rsa","*credentials*.json",
+              "*serviceAccount*.json","*service-account*.json","*.kdbx","*.ovpn")
+    secrets="no" if leaked else "ok"
     # env templates live under many names/depths (integration/platform.env.example, .env.sample…)
     envex="ok" if ls(p,"*env.example","*env.example*","*.env.sample","*env.template","*env.dist") else "no"
     rows=[
