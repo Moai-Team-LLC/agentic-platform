@@ -1079,6 +1079,22 @@ _enrich() {
   local mem="$HOME/.claude/projects/-Users-duchenchuk-Documents-ClaudeCode/memory"
   [ -f "$mem/MEMORY.md" ] && grep -iF "$1" "$mem/MEMORY.md" 2>/dev/null | sed 's/^- //' | head -15
 }
+# Loop License for a dispatched sub-agent (STANDARD Part IV · DoD 17). A headless
+# `claude -p` IS a real agent loop — the model decides when to stop — so it must not
+# run uncapped. What we can enforce here, honestly:
+#   · cost cap    → --max-budget-usd (below). The CLI (2.1.x) exposes NO --max-turns,
+#                   so the budget IS the stop condition, not an iteration count.
+#   · kill switch → the operator's Ctrl-C: every dispatch is foreground + human-triggered.
+#   · blast radius→ the repo dir we cd into (agentic dev), or none (agentic act).
+# Set AGENTIC_AGENT_BUDGET_USD=off to run uncapped (deliberate, not the default).
+AGENT_BUDGET_USD="${AGENTIC_AGENT_BUDGET_USD:-5.00}"
+
+# Run one headless sub-agent under the cost cap. No bash arrays: this ships on macOS
+# bash 3.2 under `set -u`, where expanding an empty array is an unbound-variable error.
+_claude_run() {
+  if [ "$AGENT_BUDGET_USD" = "off" ]; then claude -p "$1"; else claude -p --max-budget-usd "$AGENT_BUDGET_USD" "$1"; fi
+}
+
 # dispatch a sub-agent: label stage prompt run ctx
 _dispatch() {
   local label="$1" stage="$2" prompt="$3" run="$4" ctx="$5" cwd="${6:-}"
@@ -1090,8 +1106,14 @@ $prompt"
   echo "  $(c '1;36' 'prompt:') $prompt"
   if [ "$run" = 1 ]; then
     command -v claude >/dev/null || { bad "claude CLI not on PATH"; return 1; }
-    echo ""; say "running sub-agent (claude -p)$([ -n "$cwd" ] && echo " in $cwd — reads the real code")…"; echo ""
-    if [ -n "$cwd" ] && [ -d "$cwd" ]; then ( cd "$cwd" && claude -p "$prompt" ); else claude -p "$prompt"; fi
+    echo ""; say "running sub-agent (claude -p)$([ -n "$cwd" ] && echo " in $cwd — reads the real code")…"
+    if [ "$AGENT_BUDGET_USD" = "off" ]; then
+      warn "loop license: UNCAPPED (AGENTIC_AGENT_BUDGET_USD=off) — the model decides when to stop"
+    else
+      echo "  $(c '2' "loop license: cost cap \$$AGENT_BUDGET_USD · kill switch: Ctrl-C · override: AGENTIC_AGENT_BUDGET_USD")"
+    fi
+    echo ""
+    if [ -n "$cwd" ] && [ -d "$cwd" ]; then ( cd "$cwd" && _claude_run "$prompt" ); else _claude_run "$prompt"; fi
   else
     echo ""; echo "  $(c '2' 'dry-run — add --run to dispatch via claude -p')"
   fi
