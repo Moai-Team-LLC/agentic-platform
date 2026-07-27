@@ -1309,8 +1309,103 @@ cmd_project() {
   esac
 }
 
+# derive the sdlc stage from evidence instead of asking for 26 hand answers.
+# Deterministic, first match wins, and every proposal prints WHY — so the human
+# reviews a claim, not a guess. Only fills UNSET stages, never overwrites a
+# declared one, and skips repos whose project is frozen/sunset (a stage there is
+# meaningless by the phase model itself).
+_sdlc_derive() {
+  local reg="${AGENTIC_COCKPIT_REG:-$HOME/.agentic-cockpit/repos.json}"
+  [ -f "$reg" ] || { bad "no registry — run: agentic snapshot"; return 1; }
+  local apply=0
+  for a in "$@"; do [ "$a" = "--apply" ] && apply=1; done
+  if [ "$apply" = 1 ]; then
+    local ts dir; ts="$(date +%Y%m%d-%H%M%S)"; dir="$BACKUP_DIR/registry-$ts"; mkdir -p "$dir"
+    cp "$PROJECTS_FILE" "$dir/projects.json" 2>/dev/null && say "backup → $dir"
+  fi
+  APPLY="$apply" REG="$reg" PROJ="$PROJECTS_FILE" SNAP="$HOME/.agentic-cockpit/snapshot.json" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json,subprocess,time
+def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
+reg={r["name"]:r for r in json.load(open(os.environ["REG"],encoding="utf-8"))}
+projp=os.environ["PROJ"]; proj=json.load(open(projp,encoding="utf-8"))
+apply=os.environ["APPLY"]=="1"
+DEAD={"frozen","sunset"}
+# Live prod health from the last snapshot. A prod_url in the registry only says a URL
+# was DECLARED — it does not say the host answers. Deriving "maintain" from a declared
+# URL would have marked a repo whose droplet was deleted (HTTP 530) as maintained.
+snap={}; snap_at="?"
+try:
+    s=json.load(open(os.environ["SNAP"],encoding="utf-8"))
+    snap={p.get("name",""):str(p.get("code","") or "") for p in (s.get("prod") or [])}
+    snap_at=str(s.get("at","?"))[:16]
+except Exception: pass
+def prod_state(name):
+    c=snap.get(name,"")
+    if c[:1] in ("2","3"): return "live",c
+    if c and c!="-": return "down",c
+    return "unknown",c or "-"
+
+def git(p,*a):
+    try: return subprocess.check_output(["git","-C",p]+list(a),stderr=subprocess.DEVNULL).decode("utf-8","replace")
+    except Exception: return ""
+
+DEPLOY=("dockerfile","docker-compose","deploy/","fly.toml","vercel.json","procfile","helm/","k8s/",".do/app")
+CODE=(".ts",".tsx",".js",".jsx",".go",".py",".rs",".java",".kt",".rb",".php",".swift",".sh")
+
+def derive(name,path,prod_url):
+    if not path or not os.path.isdir(path): return None,"path missing"
+    files=[f.strip().lower() for f in git(path,"ls-files").splitlines() if f.strip()]
+    if not files: return None,"no tracked files"
+    if prod_url:
+        st,code=prod_state(name)
+        if st=="live": return "maintain","live %s (%s)"%(prod_url[:32],code)
+        # declared prod that does not answer is an OPS finding, not a stage
+        return None,"prod declared (%s) but health=%s — fix or clear prod_url before staging"%(prod_url[:28],code)
+    has_dep=any(any(d in f for d in DEPLOY) for f in files)
+    if has_dep: return "deploy","deploy config, no prod_url"
+    has_ci=any(f.startswith(".github/workflows/") for f in files)
+    has_test=any(("test" in f or "spec" in f) and f.endswith(CODE) for f in files)
+    if has_test or has_ci:
+        return "test","%s%s%s"%("tests" if has_test else "", " + " if (has_test and has_ci) else "", "CI" if has_ci else "")
+    if any(f.endswith(CODE) for f in files): return "build","code, no tests/CI"
+    return "design","docs only (%d files)"%len(files)
+
+rows=[]; skipped_dead=0; problems=[]
+for pr,p in proj.items():
+    ph=(p.get("phase") or "")
+    for name,st in (p.get("repos") or {}).items():
+        if st: continue
+        if ph in DEAD: skipped_dead+=1; continue
+        e=reg.get(name) or {}
+        stage,why=derive(name,e.get("path",""),e.get("prod_url",""))
+        if stage is None: problems.append((name,pr,why)); continue
+        rows.append((stage,name,pr,why))
+
+ORDER=["maintain","deploy","test","build","design"]
+rows.sort(key=lambda r:(ORDER.index(r[0]),r[1].lower()))
+print()
+if not rows and not problems:
+    print("  "+col("nothing to derive — every active repo already has a stage","1;32")); raise SystemExit
+print("  "+col("proposed sdlc stages (%d)"%len(rows),"1;37")+col("  · %d skipped (frozen/sunset) · prod health from snapshot %s"%(skipped_dead,snap_at),"2"))
+cur=None
+for stage,name,pr,why in rows:
+    if stage!=cur: cur=stage; print(); print("  "+col(stage,"1;36"))
+    print("     %-30s %s"%(name,col("· "+why+"  ["+pr+"]","2")))
+if problems:
+    print(); print("  "+col("cannot derive (%d)"%len(problems),"1;31"))
+    for name,pr,why in problems: print("     %-30s %s"%(name,col("· "+why+"  ["+pr+"]","2")))
+if not apply:
+    print(); print("  "+col("dry-run — add --apply to write it","2")); raise SystemExit
+n=0
+for stage,name,pr,why in rows:
+    if not proj[pr]["repos"].get(name): proj[pr]["repos"][name]=stage; n+=1
+json.dump(proj,open(projp,"w",encoding="utf-8"),ensure_ascii=False,indent=1)
+print(); print("  "+col("written: %d stage(s)"%n,"1;32"))'
+}
+
 cmd_sdlc() {
   [ -f "$PROJECTS_FILE" ] || { bad "no projects — run: agentic project seed"; return 1; }
+  if [ "${1:-}" = "--derive" ]; then shift 2>/dev/null || true; _sdlc_derive "$@"; return $?; fi
   if [ -z "${1:-}" ] || [ "$1" = "show" ]; then
     PROJ="$PROJECTS_FILE" PYTHONIOENCODING=utf-8 python3 -c '
 import os,json
