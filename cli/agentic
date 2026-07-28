@@ -1085,14 +1085,55 @@ _enrich() {
 #   · cost cap    → --max-budget-usd (below). The CLI (2.1.x) exposes NO --max-turns,
 #                   so the budget IS the stop condition, not an iteration count.
 #   · kill switch → the operator's Ctrl-C: every dispatch is foreground + human-triggered.
-#   · blast radius→ the repo dir we cd into (agentic dev), or none (agentic act).
+#   · blast radius→ the repo dir we cd into, PLUS a default-deny tool allowlist (below).
 # Set AGENTIC_AGENT_BUDGET_USD=off to run uncapped (deliberate, not the default).
 AGENT_BUDGET_USD="${AGENTIC_AGENT_BUDGET_USD:-5.00}"
 
-# Run one headless sub-agent under the cost cap. No bash arrays: this ships on macOS
-# bash 3.2 under `set -u`, where expanding an empty array is an unbound-variable error.
+# Sandbox (STANDARD DoD 6 — tool execution sandboxed / least privilege). Every dispatch
+# prompt is ANALYSIS: "review the code and cite files", "draft a GTM plan", "verify this
+# is merged before deleting". None of them need to WRITE. So the sub-agent gets a
+# default-deny allowlist — read the filesystem, read git, nothing else. No Write/Edit,
+# no arbitrary Bash. The wall is enforced by the CLI, outside the model: an injected
+# instruction in a repo file cannot talk its way past a flag.
+# AGENTIC_AGENT_TOOLS overrides the list; `off` removes the wall (deliberate, loud).
+AGENT_TOOLS="${AGENTIC_AGENT_TOOLS:-Read,Grep,Glob,Bash(git log:*),Bash(git status:*),Bash(git branch:*),Bash(git diff:*),Bash(git remote:*)}"
+
+# Append-only record of what we dispatched. The prompt is stored as a SHA-256, never as
+# text: it can carry the founder's private notes (_enrich), and a run log is not the
+# place for them — same payload-free rule the assurance notifier follows.
+DISPATCH_LOG="${AGENTIC_DISPATCH_LOG:-$HOME/.agentic-cockpit/dispatch.jsonl}"
+_dispatch_log() {
+  mkdir -p "$(dirname "$DISPATCH_LOG")" 2>/dev/null
+  LBL="$1" STG="$2" CWDIR="$3" PH="$4" RC="$5" DUR="$6" TOOLS="$AGENT_TOOLS" BUD="$AGENT_BUDGET_USD" LOG="$DISPATCH_LOG" \
+  PYTHONIOENCODING=utf-8 python3 -c '
+import os,json,datetime
+rec={"at":datetime.datetime.now().isoformat(timespec="seconds"),
+     "target":os.environ["LBL"],"stage":os.environ["STG"],"cwd":os.environ["CWDIR"],
+     "prompt_sha256":os.environ["PH"],"budget_usd":os.environ["BUD"],"tools":os.environ["TOOLS"],
+     "exit":int(os.environ["RC"] or 0),"duration_s":int(os.environ["DUR"] or 0)}
+open(os.environ["LOG"],"a",encoding="utf-8").write(json.dumps(rec,ensure_ascii=False)+"\n")' 2>/dev/null || true
+}
+
+# Run one headless sub-agent under the cost cap + tool allowlist.
+#
+# The prompt goes over STDIN, never as an argv argument, for two reasons:
+#   1. `--allowedTools <tools...>` is VARIADIC — a trailing prompt argument gets
+#      swallowed as one more tool name and the call dies with "Input must be provided".
+#      (Caught by actually running it; passing the flag is not the same as it working.)
+#   2. the prompt carries the founder's private notes (_enrich), and argv is readable
+#      by any process via `ps` — stdin keeps it off the process list.
+# No bash arrays: this ships on macOS bash 3.2 under `set -u`, where expanding an empty
+# array is an unbound-variable error — hence the explicit four-way branch.
 _claude_run() {
-  if [ "$AGENT_BUDGET_USD" = "off" ]; then claude -p "$1"; else claude -p --max-budget-usd "$AGENT_BUDGET_USD" "$1"; fi
+  if [ "$AGENT_BUDGET_USD" = "off" ] && [ "$AGENT_TOOLS" = "off" ]; then
+    printf '%s' "$1" | claude -p
+  elif [ "$AGENT_TOOLS" = "off" ]; then
+    printf '%s' "$1" | claude -p --max-budget-usd "$AGENT_BUDGET_USD"
+  elif [ "$AGENT_BUDGET_USD" = "off" ]; then
+    printf '%s' "$1" | claude -p --allowedTools "$AGENT_TOOLS"
+  else
+    printf '%s' "$1" | claude -p --max-budget-usd "$AGENT_BUDGET_USD" --allowedTools "$AGENT_TOOLS"
+  fi
 }
 
 # dispatch a sub-agent: label stage prompt run ctx
@@ -1112,11 +1153,49 @@ $prompt"
     else
       echo "  $(c '2' "loop license: cost cap \$$AGENT_BUDGET_USD · kill switch: Ctrl-C · override: AGENTIC_AGENT_BUDGET_USD")"
     fi
+    if [ "$AGENT_TOOLS" = "off" ]; then
+      warn "sandbox: OFF (AGENTIC_AGENT_TOOLS=off) — the sub-agent may write and run anything"
+    else
+      echo "  $(c '2' "sandbox: read-only allowlist ($AGENT_TOOLS)")"
+    fi
     echo ""
+    local t0 rc phash
+    phash="$(printf '%s' "$prompt" | shasum -a 256 2>/dev/null | cut -d' ' -f1)"
+    t0="$(date +%s)"
     if [ -n "$cwd" ] && [ -d "$cwd" ]; then ( cd "$cwd" && _claude_run "$prompt" ); else _claude_run "$prompt"; fi
+    rc=$?
+    _dispatch_log "$label" "$stage" "$cwd" "$phash" "$rc" "$(( $(date +%s) - t0 ))"
   else
     echo ""; echo "  $(c '2' 'dry-run — add --run to dispatch via claude -p')"
   fi
+}
+
+# what did we actually dispatch? (the sub-agent run log — DoD: 100% of runs recorded)
+cmd_dispatches() {
+  [ -f "$DISPATCH_LOG" ] || { warn "no dispatches yet — $DISPATCH_LOG"; return 0; }
+  local n=15
+  for a in "$@"; do case "$a" in [0-9]*) n="$a";; esac; done
+  N="$n" LOG="$DISPATCH_LOG" PYTHONIOENCODING=utf-8 python3 -c '
+import os,json
+def col(s,c): return "\033[%sm%s\033[0m"%(c,s)
+rows=[]
+for line in open(os.environ["LOG"],encoding="utf-8"):
+    line=line.strip()
+    if not line: continue
+    try: rows.append(json.loads(line))
+    except Exception: pass
+n=int(os.environ["N"]); tail=rows[-n:]
+print()
+print("  "+col("last %d of %d dispatch(es)"%(len(tail),len(rows)),"1;37"))
+for r in tail:
+    ok=r.get("exit",0)==0
+    print("  %s %-16s %-22s %s"%(
+        col("ok" if ok else "fail","1;32" if ok else "1;31"),
+        r.get("at","")[5:16].replace("T"," "),
+        (r.get("target","") or "")[:22],
+        col("%ss · $%s · %s"%(r.get("duration_s",0),r.get("budget_usd","?"),(r.get("stage","") or "-")),"2")))
+print()
+print("  "+col("prompts are stored as sha256, never as text (they can carry private notes)","2"))'
 }
 
 # business agent on a PROJECT (money phase — we sell projects)
@@ -1695,6 +1774,7 @@ agentic — the Agentic Platform control plane
   agentic sdlc [<repo> <stage>]  engineering axis — per-repo stage (design|build|test|deploy|maintain)
   agentic check [<repo>]   readiness checklist — docs/github/deploy/tests/CI/secrets, auto-detected
   agentic dedupe [--apply]  collapse duplicate CHECKOUTS of one repo in the registry (folders untouched)
+  agentic dispatches [N]   what the sub-agents were actually asked to do (run log, prompts hashed)
   agentic phase [<repo> <phase>]  living roadmap — declare/show where each project is (7 phases)
   agentic brief            daily focus digest — ranked by money, what to push/kill, sprawl
   agentic act <project> [--run]  business sub-agent for a project's money phase (shipped→GTM)
@@ -1730,6 +1810,7 @@ case "${1:-}" in
   project) shift 2>/dev/null || true; cmd_project "$@" ;;
   sdlc) shift 2>/dev/null || true; cmd_sdlc "$@" ;;
   dedupe) shift 2>/dev/null || true; cmd_dedupe "$@" ;;
+  dispatches) shift 2>/dev/null || true; cmd_dispatches "$@" ;;
   check) shift 2>/dev/null || true; cmd_check "$@" ;;
   phase) shift 2>/dev/null || true; cmd_phase "$@" ;;
   brief) cmd_brief ;;
