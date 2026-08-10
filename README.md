@@ -15,6 +15,20 @@ their own. **This** repo is the opposite bet: the *integrated* platform — the 
 together, one shared config, one control plane. It doesn't fork or modify the products; it
 **vendors them as submodules** and composes them.
 
+### What this demonstrates
+
+This repo is the **reference integration of the [Agentic Product Standard](https://github.com/Moai-Team-LLC/agentic-product-standard)** — the runnable proof that its layers compose rather than only read well on paper. It is not an orchestrator and does not compete with LangGraph, the Agent Framework or the Agent SDKs: it is the governance plane that sits *around* whichever runtime you use, and it delegates transport to Bifrost rather than reinventing it.
+
+Concretely, `agentic up` gives you a working instance where:
+
+- **every LLM call is routed and budgeted** — one gateway, per-tenant keys, a cost ledger you can read;
+- **every run leaves a trace and an eval verdict** — attribution per agent, judge calibration, regression gates;
+- **the agents get red-teamed** — a scan of the family itself, findings as SARIF;
+- **knowledge and memory are a service**, not prompt-stuffing — MCP endpoint, retrieval, beliefs;
+- **nothing is exposed** — every host port binds to `127.0.0.1` by default.
+
+If you evaluate agent platforms for a living, the fastest read is `agentic up && agentic doctor`: it either proves the wiring end-to-end on your machine in a few minutes, or it does not.
+
 ```bash
 git clone --recurse-submodules <this-repo> && cd agentic-platform
 cp integration/platform.env.example .env      # add your OPENROUTER_API_KEY
@@ -70,7 +84,7 @@ A single control plane (`console/`) aggregating the live ecosystem into one pane
 
 ```
 agentic-platform/
-├── vendor/            ← the 7 products as pinned git submodules (never modified)
+├── vendor/            ← the six products as pinned git submodules (never modified)
 ├── integration/      ← the unified config
 ├── cli/agentic       ← control plane: up·down·status·doctor·ask·backup·restore·console·demo·token·install·logs
 ├── console/          ← BFF (Bun) + web dashboard — the single pane
