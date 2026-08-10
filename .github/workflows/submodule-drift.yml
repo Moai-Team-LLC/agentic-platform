@@ -1,0 +1,69 @@
+name: Submodule integrity
+
+# The platform vendors six sibling repos as PINNED submodules. That pinning is what
+# makes it reproducible — and also its main liability: the pins can silently fall
+# behind, or a pin can stop composing, and nobody notices until a demo fails.
+#
+# This workflow closes that gap in two ways, weekly and on demand:
+#   1. HARD GATE — check the pinned tree out for real and prove it still composes.
+#      If a pin breaks the wiring, this job goes red.
+#   2. REPORT — how far each pin is behind its upstream default branch, written to
+#      the run summary. Being behind is a decision, not a defect, so it never fails
+#      the build; it just stops being invisible.
+#
+# The main CI workflow deliberately does NOT check out submodules (speed); this is
+# the one place that does.
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrity:
+    name: pinned submodules compose + drift report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: The pinned tree must still compose
+        run: |
+          sed "s#\${HOME}#$HOME#g" integration/platform.env.example > .env
+          printf 'AUTH_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+          printf 'AGW_VAULT_KEY=%s\n' "$(openssl rand -hex 32)" >> .env
+          docker compose -f deploy/docker-compose.yml --env-file .env config --quiet
+          echo "pinned submodules wire up cleanly"
+
+      - name: Every pin resolves to a real commit
+        run: |
+          set -e
+          git submodule status --recursive | while read -r line; do
+            case "$line" in
+              -*) echo "::error::submodule not initialised: $line"; exit 1 ;;
+              +*) echo "::warning::submodule checked out at a different commit than pinned: $line" ;;
+            esac
+          done
+          echo "all pins resolved"
+
+      - name: How far behind upstream (report only)
+        run: |
+          {
+            echo "### Vendored pins vs upstream"
+            echo ""
+            echo "| submodule | behind | pinned |"
+            echo "|---|---:|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          git config -f .gitmodules --get-regexp path | awk '{print $2}' | while read -r p; do
+            pin="$(git -C "$p" rev-parse --short HEAD 2>/dev/null || echo '?')"
+            git -C "$p" fetch -q origin 2>/dev/null || true
+            git -C "$p" remote set-head origin -a >/dev/null 2>&1 || true
+            behind="$(git -C "$p" rev-list --count HEAD..origin/HEAD 2>/dev/null || echo '?')"
+            printf '| %s | %s | `%s` |\n' "${p#vendor/}" "$behind" "$pin" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "_Behind is informational — pins are bumped deliberately with \`agentic update\`._" >> "$GITHUB_STEP_SUMMARY"
