@@ -26,7 +26,8 @@ It is a **readiness map**. It is not a certificate, not an attestation, and not 
 2. **Not legal advice.** Authored by an EU (Cyprus)-based consultancy, not a law firm. Article interpretation below is engineering-level, for scoping conversations with counsel.
 3. **Not a claim that deploying this platform makes an AI system compliant.** The majority of both frameworks' requirements are organisational (policies, incident-response plans, vendor due diligence, acceptable-use terms, processing locations, third-party testing contracts). Software cannot satisfy them. Where a requirement is organisational, this document says **None** and does not dress it up.
 4. **Not a substitute for reading the code.** Every "Evidence" row cites a path. Verify it — §f gives the commands.
-5. **AIUC-1 is an overlay on SOC 2.** This repository produces no SOC 2 evidence and makes no claim about the general security controls SOC 2 covers.
+5. **A status describes the mechanism; only a measurement describes the data.** Code that would emit an artifact is not an artifact. Each status below is paired with a dated row count in §b.2, because the first thing an assessor asks of an evidence surface is "show me the records" — and for several surfaces here the honest answer today is "there are none yet".
+6. **AIUC-1 is an overlay on SOC 2.** This repository produces no SOC 2 evidence and makes no claim about the general security controls SOC 2 covers.
 
 ### Status vocabulary
 
@@ -37,6 +38,7 @@ Used consistently in every table below.
 | **Evidence** | Running code produces a machine-readable artifact. Path or endpoint given. |
 | **Partial** | An artifact exists, but with a named limitation an assessor will hit. The limitation is stated in the row. |
 | **Declared** | The requirement is written into the standard or doctrine this repo follows, but **no enforcement code exists here**. Treat as absent. |
+| **Unused** | The mechanism is implemented and reachable, but it has **never produced a record**. §b.2 gives the counts. Treat as absent for assessment: an auditor asks for artifacts, not for the code that would produce them. |
 | **None** | No artifact. Either organisational, or not built. |
 
 ### Scope
@@ -60,12 +62,12 @@ Claims describe the pinned commits. Run `git submodule status` to confirm what y
 | 4 | Scan coverage metric | `attacksConclusive / attacksTotal` | `vendor/AgenticAssurance/src/scan.ts` (`computeCoverage`) | In the report payload | **Evidence** — fail-closed: `not_verified` is never counted as `safe` (`src/index.ts:12–13`) |
 | 5 | Cost ledger | SQLite `request_ledger`: tenant, key, run, model, route, `outcome` (9 values incl. `denied_guard`/`denied_budget`/`denied_policy`), tokens, `cost_usd`, cache fields, `latency_ms`, `judge_verdict`, `input_hash` (sha256) | `vendor/AgenticGateway/src/cost/ledger.ts`; DB at `AGW_DB_PATH` (default `./data/agw.db`) | Direct SQL | **Partial** — no export API, no retention policy, not surfaced in the console |
 | 6 | Decision evidence stream | JSONL, hash-not-text, event kinds `GatewayRequest`/`GuardBlock`/`OutputLeak`/`ProtectedPathFlag`/`SpendAnomaly`/`JudgeVerdict`/`CliMutation` | `vendor/AgenticGateway/src/delegate/evidence.ts`; `AGW_EVIDENCE_FILE` (default `./data/evidence.jsonl`) or HTTP to `POST /hooks/audit` | `jq` over the file; console `GET /api/cost` | **Evidence** — best-effort by design: evidence failure never blocks a request |
-| 7 | Execution traces | `apl_span`: tenant, trace/span/parent, operation, **`agent_id` + `agent_version`**, timestamps, attributes; TimescaleDB hypertable, tenant RLS FORCE | `vendor/AgenticPerformance/packages/core/src/database/schema/trace-span.ts` | Postgres SQL (`APL_PG_PORT`, default 5439); console `GET /api/traces` | **Partial** — retention 90 days (`_span-hypertable.sql:16`); console shows only the latest rows |
-| 8 | Judge calibration card | TPR/TNR with **Wilson 95% lower bound**, ECE (10 bins), Brier; pinned `model_snapshot_id`; status `uncalibrated`/`calibrated`/`stale` | `vendor/AgenticPerformance/packages/core/src/judge/{calibration,card}.ts`, schema `judge.ts` | Postgres SQL | **Evidence** — only `calibrated` judges may gate |
-| 9 | Eval sets + provenance | `apl_eval_case`/`apl_eval_run`, per-agent golden sets, `case_set_hash`, provenance (`rubric_version`, `labeler`, `label_date`, `agreement`, `origin`); sets without provenance are marked `unanchored` and cannot gate a release | `vendor/AgenticPerformance/packages/core/src/database/schema/eval.ts` | Postgres SQL | **Evidence** |
-| 10 | Change ledger (agent improvements) | `apl_improvement`: `version_from/to`, hypothesis, status `proposed→approved→canary→deployed→rolled_back`, author (`human`/`claude`/`judge-gated`), `patch_diff`, `eval_run_id`, `calibration_snapshot`, `canary_ab_outcome` | `.../schema/improvement.ts` | Postgres SQL | **Evidence** — a `judge-gated` author is rejected without patch + eval run + calibration + canary |
-| 11 | Tool-use audit log | `tool_audit_events`: source, `event_kind` (`PostToolUse`, `PermissionRequest`, `ConfigChange`, …), actor, session, tool, decision, `payload_hash` (sha256) | `vendor/AgenticMind/packages/shared/src/database/schema/knowledge/tool-audit-events.ts`; ingest `vendor/AgenticMind/apps/server/src/hooks-audit.ts` | `POST /hooks/audit` (bearer, `audit:write` scope, body capped by `AUDIT_MAX_BYTES`); Postgres SQL (`MIND_PG_PORT`, default 5435) | **Partial** — no retention policy, no SIEM forwarder |
-| 12 | Guard events | `guard_events`: tenant, actor, tool, `reason` ∈ {`injection`, `pii_redacted`, `rate_limited`, `output_leak`, `too_long`}, `input_hash` | `.../schema/knowledge/guard-events.ts` | Postgres SQL | **Partial** — no retention policy |
+| 7 | Execution traces | `apl_span`: tenant, trace/span/parent, operation, **`agent_id` + `agent_version`**, timestamps, attributes; TimescaleDB hypertable, tenant RLS FORCE | `vendor/AgenticPerformance/packages/core/src/database/schema/trace-span.ts` | Postgres SQL (`APL_PG_PORT`, default 5439); console `GET /api/traces` | **Partial** — retention 90 days (`_span-hypertable.sql:16`); console shows only the latest rows · **measured 2026-10-17: 13 rows, all from that day** — earlier history did not survive a host migration |
+| 8 | Judge calibration card | TPR/TNR with **Wilson 95% lower bound**, ECE (10 bins), Brier; pinned `model_snapshot_id`; status `uncalibrated`/`calibrated`/`stale` | `vendor/AgenticPerformance/packages/core/src/judge/{calibration,card}.ts`, schema `judge.ts` | Postgres SQL | **Unused** — implemented, but `apl_judge` holds **0 rows**: no judge has ever been calibrated, so nothing has ever gated on it |
+| 9 | Eval sets + provenance | `apl_eval_case`/`apl_eval_run`, per-agent golden sets, `case_set_hash`, provenance (`rubric_version`, `labeler`, `label_date`, `agreement`, `origin`); sets without provenance are marked `unanchored` and cannot gate a release | `vendor/AgenticPerformance/packages/core/src/database/schema/eval.ts` | Postgres SQL | **Unused** — implemented, but `apl_eval_run` holds **0 rows**: no eval set has ever been run against an agent |
+| 10 | Change ledger (agent improvements) | `apl_improvement`: `version_from/to`, hypothesis, status `proposed→approved→canary→deployed→rolled_back`, author (`human`/`claude`/`judge-gated`), `patch_diff`, `eval_run_id`, `calibration_snapshot`, `canary_ab_outcome` | `.../schema/improvement.ts` | Postgres SQL | **Unused** — implemented, but `apl_improvement` holds **0 rows**: no agent change has ever been recorded through it |
+| 11 | Tool-use audit log | `tool_audit_events`: source, `event_kind` (`PostToolUse`, `PermissionRequest`, `ConfigChange`, …), actor, session, tool, decision, `payload_hash` (sha256) | `vendor/AgenticMind/packages/shared/src/database/schema/knowledge/tool-audit-events.ts`; ingest `vendor/AgenticMind/apps/server/src/hooks-audit.ts` | `POST /hooks/audit` (bearer, `audit:write` scope, body capped by `AUDIT_MAX_BYTES`); Postgres SQL (`MIND_PG_PORT`, default 5435) | **Unused** — the endpoint authenticates and validates, but `tool_audit_events` holds **0 rows**: no client has ever posted to it |
+| 12 | Guard events | `guard_events`: tenant, actor, tool, `reason` ∈ {`injection`, `pii_redacted`, `rate_limited`, `output_leak`, `too_long`}, `input_hash` | `.../schema/knowledge/guard-events.ts` | Postgres SQL | **Partial** — no retention policy · **measured 2026-10-17: 9 rows, newest 2026-07-23**; an `injection` block that fired that day left **no row** — the table under-reports |
 | 13 | HITL approval ledger | `RemediationState` machine: `guard_rejected`/`judge_rejected`/`pending_approval`/`approved`/`applied`/`reverted`/`declined`; approve/decline require an actor of form `hitl:<approver>`; append-only, deep-frozen history | `vendor/AgenticMind/packages/assurance/src/remediate/ledger.ts` | Read via the assurance package / DB | **Partial** — covers AAL remediations only, not general agent runtime |
 | 14 | Human-decision capture | Each `approve`/`override`/`reject` becomes a golden-set candidate with `origin: review_capture` | `vendor/AgenticPerformance/packages/core/src/hitl/review-capture.ts` | Postgres SQL | **Evidence** — label supply, **not** a blocking approval |
 | 15 | Read-only aggregation API | JSON: `/api/health`, `/api/cost`, `/api/traces`, `/api/findings`, `/api/memory`, `/api/fleet`, `/api/overview` | `console/bff/server.ts` | `curl http://127.0.0.1:4600/api/overview` | **Partial** — **no authentication**; bound to `127.0.0.1` by design; connects to Postgres with the default superuser role (`console/bff/server.ts:35–36`), so tenant RLS does not constrain it |
@@ -88,6 +90,32 @@ Claims describe the pinned commits. Run `git submodule status` to confirm what y
 | 27 | Rate limiting | `vendor/AgenticMind/packages/shared/src/database/schema/knowledge/rate-limits.ts` | Fixed-window counters per principal (or principal:tool), atomic upsert | **Evidence** |
 | 28 | Eval regression CI gate | `vendor/agentic-product-standard/templates/ci/eval-gate.yml` | File is marked `TEMPLATE` with `TODO`s. `MIN_PASS_RATE` appears **nowhere** outside that template | **Declared** — not wired into any pipeline in this repo or any submodule |
 | 29 | Blast-radius limit | Doctrine only (`STANDARD.md`, skills) | No code limits how many files/tenants/records one action may touch | **Declared** |
+
+
+### b.2 Measured state — row counts as of 2026-10-17
+
+Read from the running deployment, not from the schema. A zero-row surface is marked **Unused** in §b.1: the
+mechanism works, nothing has exercised it. Reproduce with the queries in §f.
+
+| Surface | Store | Rows | Newest | Reading |
+|---|---|---:|---|---|
+| Knowledge materials | `materials` | 289 | 2026-10-17 | Active — 14 added on the measurement date |
+| Chunks / cards | `chunks` / `knowledge_cards` | 2797 / 1047 | 2026-10-17 | Active |
+| Beliefs | `beliefs` | 6884 | 2026-08-08 | Static for 70 days — see below |
+| Execution traces | `apl_span` | 13 | 2026-10-17 | Same-day rows only; earlier history lost in a host migration |
+| Judge calibration | `apl_judge` | **0** | — | Never calibrated |
+| Eval runs | `apl_eval_run` | **0** | — | Never run |
+| Agent change ledger | `apl_improvement` | **0** | — | Never used |
+| Tool-use audit log | `tool_audit_events` | **0** | — | Never received a post |
+| Guard events | `guard_events` | 9 | 2026-07-23 | Under-reports — a block on 2026-10-17 left no row |
+
+**The gap matters more than the counts.** Between 2026-08-08 and 2026-10-17 this deployment accepted no
+writes at all: a host migration left the client holding a bearer token signed with the previous host's
+secret, so every call failed closed with `401`. Failing closed was correct. What was absent was any signal
+that it had happened — this repository's own `agentic doctor` exercises exactly that path and would have
+reported it on any run, but nothing ran it. A surface that silently stops producing is indistinguishable
+from one that was never exercised, which is why this section carries a date and states the gap instead of
+smoothing it over.
 
 ---
 
