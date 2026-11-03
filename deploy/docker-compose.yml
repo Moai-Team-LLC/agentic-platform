@@ -19,7 +19,12 @@ services:
     restart: unless-stopped
 
   bifrost:
-    image: maximhq/bifrost:v1.6.2
+    # v2.x forwards response_format byte for byte; v1.6.2 re-sorted every schema
+    # key alphabetically, and strict-output union variants whose discriminator did
+    # not sort first could never be produced (Unlock blog lists, 03.11.2026).
+    # Keep config_store disabled unless enforce_auth_on_inference is set explicitly:
+    # on a fresh store 2.4.0 turns it on, and the gateway calls Bifrost without a key.
+    image: maximhq/bifrost:v2.4.0@sha256:a1c90607dcfd13c1fb2f9476ceb3bb24407a50ade7fdf3e61a59fb42b09e5c57
     restart: unless-stopped
     depends_on: [redis]
     environment:
